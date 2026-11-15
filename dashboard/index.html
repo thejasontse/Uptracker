@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Uptracker — Dashboard</title>
+<script>
+// Anchor all relative asset URLs (app.css, ./vendor/…) to the app's directory.
+// This makes the page work both when served directly (http://host:8090/dashboard/)
+// and when reached through a port-forwarding proxy, even if the proxy URL is
+// missing its trailing slash.
+(function () {
+  var p = location.pathname;
+  if (p.charAt(p.length - 1) !== '/') p = p.replace(/\/[^\/]*$/, '/');
+  document.write('<base href="' + p + '">');
+})();
+</script>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="app">
+  <main>
+    <div id="canvas"></div>
+  </main>
+  <footer id="tableWrap">
+    <div class="query-bar">
+      <label for="viewSelect">View</label>
+      <select id="viewSelect" class="q" title="Filter the table by a saved query">
+        <option value="">All nodes</option>
+      </select>
+      <span id="queryStatus" class="q-status"></span>
+    </div>
+    <div class="tableScroll">
+      <table id="nodesTable">
+        <thead>
+          <tr><th data-col="label">Label</th><th data-col="status">Status</th></tr>
+        </thead>
+        <tbody id="nodesTbody"></tbody>
+      </table>
+    </div>
+  </footer>
+</div>
+<p id="bootError" class="err pad" hidden></p>
+<script>
+// Surface module/import failures (a classic handler can see a failed `import`,
+// which a try/catch inside the module cannot).
+window.addEventListener('error', function (e) {
+  var d = document.getElementById('bootError');
+  if (d) { d.hidden = false; d.textContent = 'Failed to load: ' + (e.message || 'script error'); }
+});
+</script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

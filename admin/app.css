@@ -1,0 +1,251 @@
+/* Uptracker chrome — styled to match nodegraph's own design tokens. */
+:root {
+  --ng-bg: #fafafa;
+  --ng-grid: #e0e0e0;
+  --ng-node-bg: #ffffff;
+  --ng-node-border: #b0b0b0;
+  --ng-header-bg: #e8e8e8;
+  --ng-text: #222222;
+  --ng-muted: #888888;
+  --ng-port-in: #2a7fff;
+  --ng-edge: #777777;
+  --ng-edge-selected: #d33;
+  --ng-btn-hover: #00000022;
+  --ng-danger: #e04040;
+  --ng-row-alt: #f2f5f8;
+  --dock-w: 400px;
+}
+.dark {
+  --ng-bg: #1e1e24;
+  --ng-grid: #2e2e38;
+  --ng-node-bg: #2a2a33;
+  --ng-node-border: #55556a;
+  --ng-header-bg: #3a3a48;
+  --ng-text: #e8e8f0;
+  --ng-muted: #9a9ab0;
+  --ng-port-in: #5aa2ff;
+  --ng-edge: #8a8aa0;
+  --ng-edge-selected: #ff6666;
+  --ng-btn-hover: #ffffff22;
+  --ng-row-alt: #26262e;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; height: 100%;
+  font: 12px system-ui, sans-serif;
+  color: var(--ng-text); background: var(--ng-bg);
+}
+#app { display: flex; flex-direction: column; height: 100vh; }
+main { flex: 1; display: flex; min-height: 0; position: relative; }
+
+/* Canvas */
+#canvas { flex: 1; min-width: 0; }
+
+/* Dock — mirrors the nodegraph menu/panel surface */
+#dock {
+  width: var(--dock-w); display: flex; flex-direction: column;
+  border-left: 1px solid var(--ng-node-border);
+  background: var(--ng-node-bg);
+  font: 12px system-ui, sans-serif;
+}
+#dockBody { flex: 1; overflow-y: auto; }
+
+/* Folder tabs — the home view's primary navigation (settings/credentials/
+   import/export). The active tab shares the content surface's background and
+   border so it reads as the front flap of an open folder. */
+.tabs {
+  display: flex; gap: 2px; padding: 6px 8px 0;
+  border-bottom: 1px solid var(--ng-node-border);
+  background: var(--ng-header-bg);
+  position: sticky; top: 0; z-index: 1;
+}
+.tab {
+  font: inherit; cursor: pointer;
+  padding: 5px 10px; font-size: 11px;
+  border: 1px solid var(--ng-node-border); border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background: var(--ng-header-bg); color: var(--ng-muted);
+  margin-bottom: -1px;
+}
+.tab:hover { background: var(--ng-btn-hover); color: var(--ng-text); }
+.tab.active {
+  background: var(--ng-node-bg); color: var(--ng-text);
+  border-bottom: 1px solid var(--ng-node-bg); font-weight: 600;
+}
+/* Manual refresh — right-justified in the home tabs bar (the admin side never
+   auto-polls; this is the only pull-the-server control). */
+.tabs .dock-refresh {
+  margin-left: auto; align-self: center;
+  font: inherit; font-size: 11px; cursor: pointer;
+  padding: 3px 9px; border-radius: 6px;
+  border: 1px solid var(--ng-node-border);
+  background: var(--ng-header-bg); color: var(--ng-muted);
+}
+.tabs .dock-refresh:hover { background: var(--ng-btn-hover); color: var(--ng-text); }
+.tabs .dock-refresh:disabled { opacity: .5; cursor: default; }
+#tabBody { display: block; }
+.card.needs-rekey { border-color: #d99400; background: #d9940012; }
+#dock h2 { font-size: 13px; font-weight: 600; margin: 0 0 4px; }
+#dock h3 {
+  font-size: 11px; font-weight: 600; margin: 14px 0 6px;
+  text-transform: uppercase; letter-spacing: .05em; color: var(--ng-muted);
+}
+.section { padding: 10px 12px; border-bottom: 1px solid var(--ng-node-border); }
+.row { display: flex; gap: 6px; align-items: center; margin: 5px 0; }
+.row.wrap { flex-wrap: wrap; }
+/* Rule rows — fixed-column grid so each rule fits on one line. The global
+   width:100% on inputs/selects makes them fill their grid cell, which is
+   exactly what we want here (in a flex row they wrapped onto separate lines). */
+.rule-grid {
+  display: grid; gap: 6px; align-items: center; margin: 4px 0;
+  grid-template-columns: 96px minmax(0, 1fr) 14px 82px 26px;
+}
+.rule-head {
+  color: var(--ng-muted); font-size: 10px; text-transform: uppercase;
+  letter-spacing: .04em; margin-bottom: 2px;
+}
+/* Drill-down header: node label as the page title, breadcrumb trail beneath. */
+.page-title { font-size: 13px; font-weight: 600; margin: 0 0 4px; }
+.crumbs {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+  font-size: 11px; margin-bottom: 8px; color: var(--ng-muted);
+  text-transform: uppercase; letter-spacing: .05em;
+}
+.crumb {
+  font: inherit; background: none; border: none; padding: 0;
+  color: var(--ng-muted); cursor: pointer; text-transform: uppercase;
+}
+.crumb:hover { color: var(--ng-text); }
+.crumb.active { font-weight: 700; color: var(--ng-text); cursor: default; }
+.crumb-sep { color: var(--ng-muted); }
+label.f { display: block; font-size: 11px; color: var(--ng-muted); margin: 7px 0 2px; }
+.muted { color: var(--ng-muted); }
+.pad { padding: 12px; }
+
+input, select, textarea {
+  font: inherit; width: 100%; padding: 4px 7px;
+  border: 1px solid var(--ng-node-border); border-radius: 4px;
+  background: var(--ng-bg); color: var(--ng-text); outline: none;
+}
+input:focus, select:focus, textarea:focus { border-color: var(--ng-edge-selected); }
+textarea { font-family: ui-monospace, monospace; min-height: 68px; resize: vertical; }
+input[type=checkbox] { width: auto; }
+input[type=color] { padding: 1px; height: 26px; }
+
+button {
+  font: inherit; cursor: pointer; border-radius: 4px; padding: 5px 10px;
+  border: 1px solid var(--ng-node-border);
+  background: var(--ng-node-bg); color: var(--ng-text);
+}
+button:hover { background: var(--ng-btn-hover); }
+button.ghost { border-color: transparent; background: transparent; }
+button.primary { background: var(--ng-port-in); border-color: var(--ng-port-in); color: #fff; }
+button.primary:hover { filter: brightness(1.08); background: var(--ng-port-in); }
+button.danger { color: var(--ng-danger); }
+button.danger:hover { background: #e0404022; }
+button.small { padding: 2px 7px; font-size: 11px; }
+button:disabled { opacity: .5; cursor: default; }
+.toggle { font-size: 11px; color: var(--ng-muted); display: inline-flex; gap: 4px; align-items: center; }
+
+.card { border: 1px solid var(--ng-node-border); border-radius: 6px; padding: 7px 9px; margin: 7px 0; }
+.card .head { display: flex; align-items: center; gap: 6px; }
+.card .head .t { font-weight: 600; flex: 1; }
+.pill { font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 9px; color: #fff; }
+.kv { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; margin: 2px 0; }
+.kv .k { color: var(--ng-muted); }
+.err { color: var(--ng-danger); font-size: 11px; }
+.ok { color: #3f9b3f; font-size: 11px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; vertical-align: -1px; }
+pre.out {
+  background: #0e1116; color: #cdd6e4; padding: 8px; border-radius: 4px;
+  font-size: 11px; max-height: 220px; overflow: auto; white-space: pre-wrap;
+}
+
+/* Selectable dataset cards in the dock. */
+.ds-card { cursor: pointer; }
+.ds-card:hover { border-color: var(--ng-muted); }
+.ds-card.sel { border-color: var(--ng-port-in); box-shadow: 0 0 0 1px var(--ng-port-in); }
+
+/* Nodes table — scrollable footer listing every node in the database. */
+#tableWrap {
+  height: 180px; flex: none;
+  display: flex; flex-direction: column;
+  border-top: 1px solid var(--ng-node-border);
+  background: var(--ng-node-bg);
+}
+/* Query bar (admin only): ad-hoc SQL + saved "Views". */
+.query-bar {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 8px; flex: none;
+  border-bottom: 1px solid var(--ng-node-border);
+  background: var(--ng-header-bg);
+}
+.query-bar input.q {
+  flex: 1; min-width: 0; font-family: ui-monospace, monospace; font-size: 11px;
+}
+.query-bar select.q { width: auto; max-width: 180px; }
+.query-bar button { flex: none; padding: 4px 9px; font-size: 11px; }
+/* Row count reserves room for a 4-digit total so the bar never reflows as the
+   count changes width (e.g. "9 rows" → "1000 rows"). */
+.query-bar .q-status { font-size: 10px; color: var(--ng-muted); flex: none; min-width: 9ch; text-align: right; white-space: nowrap; }
+.tableScroll { flex: 1; min-height: 0; overflow: auto; }
+#nodesTable { width: 100%; border-collapse: collapse; font-size: 11px; }
+#nodesTable thead th {
+  position: sticky; top: 0; z-index: 1; text-align: left;
+  background: var(--ng-header-bg); color: var(--ng-muted);
+  font-weight: 600; padding: 5px 10px; border-bottom: 1px solid var(--ng-node-border);
+}
+#nodesTable td {
+  padding: 4px 10px; white-space: nowrap;
+  border-bottom: 1px solid var(--ng-grid);   /* faint horizontal grid */
+  border-right: 1px solid var(--ng-grid);    /* faint vertical grid */
+}
+#nodesTable td:last-child { border-right: none; }
+#nodesTable thead th:not(:last-child) { border-right: 1px solid var(--ng-grid); }
+/* Zebra striping for readability; hover still wins (declared after). */
+#nodesTable tbody tr:nth-child(even) { background: var(--ng-row-alt); }
+#nodesTable tbody tr:hover { background: var(--ng-btn-hover); }
+#nodesTable tr.empty td { text-align: center; padding: 14px; }
+/* Sticky first column: many metric columns scroll sideways, the node label stays. */
+#nodesTable th:first-child, #nodesTable td:first-child { position: sticky; left: 0; z-index: 1; }
+#nodesTable thead th:first-child { z-index: 2; }
+#nodesTable tbody td:first-child { background: var(--ng-node-bg); }
+#nodesTable tbody tr:nth-child(even) td:first-child { background: var(--ng-row-alt); }
+#nodesTable tbody tr:hover td:first-child { background: var(--ng-header-bg); }
+/* Sortable headers: click cycles ascending → descending → unsorted. */
+#nodesTable th[data-col] { cursor: pointer; user-select: none; }
+
+/* Toast — lightweight replacement for alert() popups. */
+#sm-toast {
+  position: fixed;
+  bottom: 196px; /* just above the 180px table footer + a little gap */
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  max-width: 80vw;
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: 1px solid var(--ng-node-border);
+  background: var(--ng-node-bg);
+  color: var(--ng-text);
+  box-shadow: 0 4px 16px #00000033;
+  font: 12px system-ui, sans-serif;
+}
+#sm-toast.error { border-color: var(--ng-danger); color: var(--ng-danger); }
+
+/* [Param] autocomplete popup — anchored under the field being typed in. */
+.param-ac {
+  z-index: 120;
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--ng-node-border);
+  border-radius: 6px;
+  background: var(--ng-node-bg);
+  color: var(--ng-text);
+  box-shadow: 0 4px 16px #00000033;
+  font: 12px system-ui, sans-serif;
+}
+.param-ac-item { padding: 5px 9px; cursor: pointer; }
+.param-ac-item.active { background: var(--ng-btn-hover); }
+.param-ac-item b { font-weight: 600; }

@@ -1,0 +1,231 @@
+"""Collection pipeline: run a dataset, parse metrics, evaluate rules, persist
+the latest value, derive node status, and fire email alerts.
+
+This is the heart of the monitor. It is called by the scheduler for scheduled
+runs and by the API for manual "run now" / "test" actions.
+"""
+from __future__ import annotations
+
+import sqlite3
+from dataclasses import dataclass
+
+from . import db, executor, mailer, rules as rules_mod
+from .crypto import secret_box
+from .parser import ParsedValue, extract
+
+
+def refresh_metric_status(conn: sqlite3.Connection, metric_id: int) -> None:
+    """Re-derive a metric's stored status from its current rules + latest value.
+
+    ``metric_values.status_level_id`` is normally written by :func:`collect_dataset`,
+    but editing a metric's rules (add/remove) changes what status its *existing*
+    value maps to without any new collection. Re-evaluating here keeps the stored
+    status — and therefore the node rollup — consistent immediately after a rule
+    edit instead of waiting for the next scheduled run.
+    """
+    m = conn.execute("SELECT id, dataset_id FROM metrics WHERE id=?", (metric_id,)).fetchone()
+    if not m:
+        return
+    val = conn.execute("SELECT raw, num, txt FROM metric_values WHERE metric_id=?", (metric_id,)).fetchone()
+    levels, unknown_id = _load_status_levels(conn)
+    ranks = {lid: lv["rank"] for lid, lv in levels.items()}
+    if val is None:
+        # No value collected yet; nothing to evaluate.
+        sid = None
+    else:
+        pv = ParsedValue(val["raw"], val["num"], val["txt"])
+        rule_rows = [
+            rules_mod.RuleRow(r["id"], r["op"], r["value"], r["status_level_id"], r["priority"])
+            for r in conn.execute("SELECT * FROM rules WHERE metric_id=?", (metric_id,)).fetchall()
+        ]
+        sid = rules_mod.evaluate_metric(rule_rows, pv, ranks)
+        if sid is None:
+            sid = unknown_id
+    conn.execute(
+        "UPDATE metric_values SET status_level_id=? WHERE metric_id=?",
+        (sid, metric_id),
+    )
+    ds = conn.execute("SELECT node_id FROM datasets WHERE id=?", (m["dataset_id"],)).fetchone()
+    if ds:
+        recompute_node_status(conn, ds["node_id"])
+
+
+@dataclass
+class MetricOutcome:
+    metric_id: int
+    name: str
+    value: ParsedValue
+    status_level_id: int | None
+
+
+def _load_status_levels(conn: sqlite3.Connection) -> tuple[dict[int, dict], int | None]:
+    rows = conn.execute("SELECT id, name, color, rank, is_default FROM status_levels").fetchall()
+    by_id = {r["id"]: dict(r) for r in rows}
+    unknown_id = next((r["id"] for r in rows if r["name"] == "unknown"), None)
+    return by_id, unknown_id
+
+
+def _get_secret(conn: sqlite3.Connection, credential_id: int | None) -> tuple[str | None, str | None]:
+    if not credential_id:
+        return None, None
+    row = conn.execute("SELECT username, secret_enc FROM credentials WHERE id=?", (credential_id,)).fetchone()
+    if not row:
+        return None, None
+    return secret_box().decrypt(row["secret_enc"]), row["username"]
+
+
+def collect_dataset(conn: sqlite3.Connection, dataset_id: int, *, persist: bool = True) -> dict:
+    """Run one dataset and update latest values + node status.
+
+    Returns a summary dict suitable for both persistence and the test endpoint.
+    """
+    ds = conn.execute("SELECT * FROM datasets WHERE id=?", (dataset_id,)).fetchone()
+    if not ds:
+        return {"ok": False, "error": "dataset not found", "metrics": []}
+
+    secret, username = _get_secret(conn, ds["credential_id"])
+    result = executor.run_dataset(ds["method"], ds["script"], ds["timeout_s"], secret, username)
+
+    levels, unknown_id = _load_status_levels(conn)
+    ranks = {lid: lv["rank"] for lid, lv in levels.items()}
+    outcomes: list[MetricOutcome] = []
+
+    metrics = conn.execute("SELECT * FROM metrics WHERE dataset_id=?", (dataset_id,)).fetchall()
+    for m in metrics:
+        value = extract(result.raw, m["regex"], m["group_index"], m["cast"])
+        rule_rows = [
+            rules_mod.RuleRow(r["id"], r["op"], r["value"], r["status_level_id"], r["priority"])
+            for r in conn.execute("SELECT * FROM rules WHERE metric_id=?", (m["id"],)).fetchall()
+        ]
+        status_id = rules_mod.evaluate_metric(rule_rows, value, ranks)
+        if status_id is None:
+            status_id = unknown_id
+        outcomes.append(MetricOutcome(m["id"], m["name"], value, status_id))
+
+        if persist:
+            conn.execute(
+                """INSERT INTO metric_values (metric_id, dataset_id, raw, num, txt, status_level_id, collected_at)
+                   VALUES (?,?,?,?,?,?,?)
+                   ON CONFLICT(metric_id) DO UPDATE SET
+                     raw=excluded.raw, num=excluded.num, txt=excluded.txt,
+                     status_level_id=excluded.status_level_id, collected_at=excluded.collected_at""",
+                (m["id"], dataset_id, value.raw, value.num, value.txt, status_id, db.now_iso()),
+            )
+            _maybe_alert(conn, m, status_id, value, levels)
+
+    if persist:
+        conn.execute(
+            "UPDATE datasets SET last_run_at=?, last_status=?, last_error=?, next_run_at=? WHERE id=?",
+            (db.now_iso(), "ok" if result.ok else "error", result.error,
+             _next_run(ds["interval_s"]), dataset_id),
+        )
+        node_status = recompute_node_status(conn, ds["node_id"])
+        return {
+            "ok": result.ok,
+            "raw": result.raw,
+            "error": result.error,
+            "node_status": node_status,
+            "metrics": [_outcome_dict(o, levels) for o in outcomes],
+        }
+
+    return {
+        "ok": result.ok,
+        "raw": result.raw,
+        "error": result.error,
+        "metrics": [_outcome_dict(o, levels) for o in outcomes],
+    }
+
+
+def _outcome_dict(o: MetricOutcome, levels: dict[int, dict]) -> dict:
+    lvl = levels.get(o.status_level_id) if o.status_level_id else None
+    return {
+        "metric_id": o.metric_id,
+        "name": o.name,
+        "raw": o.value.raw,
+        "num": o.value.num,
+        "txt": o.value.txt,
+        "error": o.value.error,
+        "status": lvl["name"] if lvl else None,
+        "status_color": lvl["color"] if lvl else None,
+    }
+
+
+def recompute_node_status(conn: sqlite3.Connection, node_id: str) -> str | None:
+    """Node status = worst rank across enabled datasets' metric values."""
+    rows = conn.execute(
+        """SELECT mv.status_level_id AS sid
+           FROM metric_values mv
+           JOIN datasets d ON d.id = mv.dataset_id
+           WHERE d.node_id=? AND d.enabled=1 AND mv.status_level_id IS NOT NULL""",
+        (node_id,),
+    ).fetchall()
+    levels, unknown_id = _load_status_levels(conn)
+    ranks = {lid: lv["rank"] for lid, lv in levels.items()}
+    # Only good/warning/critical contribute to the rollup; unknown never does.
+    contrib = [r["sid"] for r in rows if r["sid"] != unknown_id]
+    sid = rules_mod.worst_status(contrib, ranks)
+    if sid is None:
+        sid = unknown_id
+    conn.execute(
+        "UPDATE nodes SET status_level_id=?, status_updated_at=? WHERE id=?",
+        (sid, db.now_iso(), node_id),
+    )
+    lvl = levels.get(sid) if sid else None
+    return lvl["name"] if lvl else None
+
+
+def _maybe_alert(conn: sqlite3.Connection, metric: sqlite3.Row, status_id: int | None,
+                 value: ParsedValue, levels: dict[int, dict]) -> None:
+    cfg = conn.execute("SELECT * FROM alert_configs WHERE metric_id=?", (metric["id"],)).fetchone()
+    if not cfg or not cfg["enabled"]:
+        return
+    lvl = levels.get(status_id) if status_id else None
+    status_name = lvl["name"] if lvl else "unknown"
+    # Only alert on problem statuses (warning/critical); good and unknown never
+    # page anyone. Honour only_on_change.
+    if status_name not in ("warning", "critical"):
+        return
+    if cfg["only_on_change"] and cfg["last_status"] == status_name:
+        return
+    if cfg["cooldown_s"] and cfg["last_sent_at"]:
+        import time
+        last = time.mktime(time.strptime(cfg["last_sent_at"], "%Y-%m-%dT%H:%M:%SZ"))
+        if time.time() - last < cfg["cooldown_s"]:
+            return
+    node_id = _metric_node(conn, metric["id"])
+    node = conn.execute("SELECT label, network_path, network_resource FROM nodes WHERE id=?", (node_id,)).fetchone()
+    ctx = _alert_ctx(node, metric, status_name, value)
+    # Subject/body fall back to the global defaults, then to built-ins, so an
+    # alert can leave them blank and still get a generated, name/status-based message.
+    subject = cfg["subject"] or db.get_setting(conn, "alert_default_subject") or "Status alert: {{status}}"
+    body = cfg["body"] or db.get_setting(conn, "alert_default_body") or \
+        "Metric {{metric.name}} on {{node.label}} is {{status}} (value={{value}})."
+    subject = mailer.render(subject, ctx)
+    body = mailer.render(body, ctx)
+    sent = mailer.send_email(conn, cfg["recipients"], subject, body)
+    conn.execute(
+        "UPDATE alert_configs SET last_status=?, last_sent_at=? WHERE metric_id=?",
+        (status_name, db.now_iso() if sent else cfg["last_sent_at"], metric["id"]),
+    )
+
+
+def _metric_node(conn: sqlite3.Connection, metric_id: int) -> str | None:
+    row = conn.execute(
+        "SELECT d.node_id FROM datasets d JOIN metrics m ON m.dataset_id=d.id WHERE m.id=?",
+        (metric_id,),
+    ).fetchone()
+    return row["node_id"] if row else None
+
+
+def _alert_ctx(node, metric, status_name: str, value: ParsedValue) -> dict:
+    return {
+        "node": {"label": node["label"] if node else "", "network_path": node["network_path"] if node else "", "network_resource": node["network_resource"] if node else ""},
+        "metric": {"name": metric["name"]},
+        "status": status_name,
+        "value": value.txt if value.txt is not None else (value.raw or ""),
+    }
+
+
+def _next_run(interval_s: int) -> str:
+    import time
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + max(1, interval_s)))

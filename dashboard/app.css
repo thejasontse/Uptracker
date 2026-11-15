@@ -1,0 +1,159 @@
+/* Uptracker chrome — styled to match nodegraph's own design tokens. */
+:root {
+  --ng-bg: #fafafa;
+  --ng-grid: #e0e0e0;
+  --ng-node-bg: #ffffff;
+  --ng-node-border: #b0b0b0;
+  --ng-header-bg: #e8e8e8;
+  --ng-text: #222222;
+  --ng-muted: #888888;
+  --ng-port-in: #2a7fff;
+  --ng-edge: #777777;
+  --ng-edge-selected: #d33;
+  --ng-btn-hover: #00000022;
+  --ng-danger: #e04040;
+  --ng-row-alt: #f2f5f8;
+  --dock-w: 400px;
+}
+.dark {
+  --ng-bg: #1e1e24;
+  --ng-grid: #2e2e38;
+  --ng-node-bg: #2a2a33;
+  --ng-node-border: #55556a;
+  --ng-header-bg: #3a3a48;
+  --ng-text: #e8e8f0;
+  --ng-muted: #9a9ab0;
+  --ng-port-in: #5aa2ff;
+  --ng-edge: #8a8aa0;
+  --ng-edge-selected: #ff6666;
+  --ng-btn-hover: #ffffff22;
+  --ng-row-alt: #26262e;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; height: 100%;
+  font: 12px system-ui, sans-serif;
+  color: var(--ng-text); background: var(--ng-bg);
+}
+#app { display: flex; flex-direction: column; height: 100vh; }
+main { flex: 1; display: flex; min-height: 0; position: relative; }
+
+/* Canvas */
+#canvas { flex: 1; min-width: 0; }
+
+/* Dock — mirrors the nodegraph menu/panel surface */
+#dock {
+  width: var(--dock-w); display: flex; flex-direction: column;
+  border-left: 1px solid var(--ng-node-border);
+  background: var(--ng-node-bg);
+  font: 12px system-ui, sans-serif;
+}
+#dockBody { flex: 1; overflow-y: auto; }
+#dock h2 { font-size: 13px; font-weight: 600; margin: 0 0 4px; }
+#dock h3 {
+  font-size: 11px; font-weight: 600; margin: 14px 0 6px;
+  text-transform: uppercase; letter-spacing: .05em; color: var(--ng-muted);
+}
+.section { padding: 10px 12px; border-bottom: 1px solid var(--ng-node-border); }
+.row { display: flex; gap: 6px; align-items: center; margin: 5px 0; }
+.row.wrap { flex-wrap: wrap; }
+label.f { display: block; font-size: 11px; color: var(--ng-muted); margin: 7px 0 2px; }
+.muted { color: var(--ng-muted); }
+.pad { padding: 12px; }
+
+input, select, textarea {
+  font: inherit; width: 100%; padding: 4px 7px;
+  border: 1px solid var(--ng-node-border); border-radius: 4px;
+  background: var(--ng-bg); color: var(--ng-text); outline: none;
+}
+input:focus, select:focus, textarea:focus { border-color: var(--ng-edge-selected); }
+textarea { font-family: ui-monospace, monospace; min-height: 68px; resize: vertical; }
+input[type=checkbox] { width: auto; }
+input[type=color] { padding: 1px; height: 26px; }
+
+button {
+  font: inherit; cursor: pointer; border-radius: 4px; padding: 5px 10px;
+  border: 1px solid var(--ng-node-border);
+  background: var(--ng-node-bg); color: var(--ng-text);
+}
+button:hover { background: var(--ng-btn-hover); }
+button.ghost { border-color: transparent; background: transparent; }
+button.primary { background: var(--ng-port-in); border-color: var(--ng-port-in); color: #fff; }
+button.primary:hover { filter: brightness(1.08); background: var(--ng-port-in); }
+button.danger { color: var(--ng-danger); }
+button.danger:hover { background: #e0404022; }
+button.small { padding: 2px 7px; font-size: 11px; }
+button:disabled { opacity: .5; cursor: default; }
+.toggle { font-size: 11px; color: var(--ng-muted); display: inline-flex; gap: 4px; align-items: center; }
+
+.card { border: 1px solid var(--ng-node-border); border-radius: 6px; padding: 7px 9px; margin: 7px 0; }
+.card .head { display: flex; align-items: center; gap: 6px; }
+.card .head .t { font-weight: 600; flex: 1; }
+.pill { font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 9px; color: #fff; }
+.kv { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; margin: 2px 0; }
+.kv .k { color: var(--ng-muted); }
+.err { color: var(--ng-danger); font-size: 11px; }
+.ok { color: #3f9b3f; font-size: 11px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; vertical-align: -1px; }
+pre.out {
+  background: #0e1116; color: #cdd6e4; padding: 8px; border-radius: 4px;
+  font-size: 11px; max-height: 220px; overflow: auto; white-space: pre-wrap;
+}
+
+/* Selectable dataset cards in the dock. */
+.ds-card { cursor: pointer; }
+.ds-card:hover { border-color: var(--ng-muted); }
+.ds-card.sel { border-color: var(--ng-port-in); box-shadow: 0 0 0 1px var(--ng-port-in); }
+
+/* Nodes table — scrollable footer listing every node in the database. */
+#tableWrap {
+  height: 180px; flex: none;
+  display: flex; flex-direction: column;
+  border-top: 1px solid var(--ng-node-border);
+  background: var(--ng-node-bg);
+}
+/* Views bar (dashboard only): pick a saved query. */
+.query-bar {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 8px; flex: none;
+  border-bottom: 1px solid var(--ng-node-border);
+  background: var(--ng-header-bg);
+}
+.query-bar label { font-size: 11px; color: var(--ng-muted); flex: none; }
+.query-bar select.q { width: auto; max-width: 240px; }
+.query-bar .q-status { font-size: 10px; color: var(--ng-muted); flex: none; white-space: nowrap; }
+.tableScroll { flex: 1; min-height: 0; overflow: auto; }
+#nodesTable { width: 100%; border-collapse: collapse; font-size: 11px; }
+#nodesTable thead th {
+  position: sticky; top: 0; z-index: 1; text-align: left;
+  background: var(--ng-header-bg); color: var(--ng-muted);
+  font-weight: 600; padding: 5px 10px; border-bottom: 1px solid var(--ng-node-border);
+}
+#nodesTable td {
+  padding: 4px 10px; white-space: nowrap;
+  border-bottom: 1px solid var(--ng-grid);   /* faint horizontal grid */
+  border-right: 1px solid var(--ng-grid);    /* faint vertical grid */
+}
+#nodesTable td:last-child { border-right: none; }
+#nodesTable thead th:not(:last-child) { border-right: 1px solid var(--ng-grid); }
+/* Zebra striping for readability; hover still wins (declared after). */
+#nodesTable tbody tr:nth-child(even) { background: var(--ng-row-alt); }
+#nodesTable tbody tr:hover { background: var(--ng-btn-hover); }
+#nodesTable tr.empty td { text-align: center; padding: 14px; }
+/* Sticky first column: many metric columns scroll sideways, the node label stays. */
+#nodesTable th:first-child, #nodesTable td:first-child { position: sticky; left: 0; z-index: 1; }
+#nodesTable thead th:first-child { z-index: 2; }
+#nodesTable tbody td:first-child { background: var(--ng-node-bg); }
+#nodesTable tbody tr:nth-child(even) td:first-child { background: var(--ng-row-alt); }
+#nodesTable tbody tr:hover td:first-child { background: var(--ng-header-bg); }
+/* Sortable headers: click cycles ascending → descending → unsorted. */
+#nodesTable th[data-col] { cursor: pointer; user-select: none; }
+
+/* Node refresh glyph (replaces the editor's +/× buttons — see js/graph.js).
+   Prefixed with .ng-header so it outranks the vendor's `.ng-header .ng-btn`
+   fill rule, which is injected into <head> after this stylesheet. */
+.ng-header .ng-btn-refresh { cursor: pointer; font-size: 15px; }
+.ng-header .ng-btn-refresh:hover { fill: var(--ng-port-in); }
+.ng-btn-spin { animation: ng-spin 0.8s linear infinite; transform-box: fill-box; transform-origin: center; }
+@keyframes ng-spin { to { transform: rotate(360deg); } }

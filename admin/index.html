@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Uptracker</title>
+<script>
+// Anchor all relative asset URLs (app.css, ./vendor/…) to the app's directory.
+// This makes the page work both when served directly (http://host:8090/) and
+// when reached through code-server's port proxy (http://host:8080/proxy/8090/),
+// even if the proxy URL is missing its trailing slash.
+(function () {
+  var p = location.pathname;
+  if (p.charAt(p.length - 1) !== '/') p = p.replace(/\/[^\/]*$/, '/');
+  document.write('<base href="' + p + '">');
+})();
+</script>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="app">
+  <main>
+    <div id="canvas"></div>
+    <aside id="dock">
+      <div id="dockBody"></div>
+    </aside>
+  </main>
+  <footer id="tableWrap">
+    <div class="query-bar">
+      <input id="queryInput" class="q" type="text" spellcheck="false"
+             placeholder="SELECT … (FROM is optional)">
+      <button id="queryRun" class="primary">Run</button>
+      <button id="querySave">Save…</button>
+      <select id="querySaved" class="q" title="Load a saved query">
+        <option value="">Saved queries…</option>
+      </select>
+      <button id="queryClear">Clear</button>
+      <span id="queryStatus" class="q-status"></span>
+    </div>
+    <div class="tableScroll">
+      <table id="nodesTable">
+        <thead>
+          <tr><th data-col="label">Label</th><th data-col="status">Status</th></tr>
+        </thead>
+        <tbody id="nodesTbody"></tbody>
+      </table>
+    </div>
+  </footer>
+</div>
+<script>
+// Surface module/import failures (a classic handler can see a failed `import`,
+// which a try/catch inside the module cannot).
+window.addEventListener('error', function (e) {
+  var d = document.getElementById('dockBody');
+  if (d && !d.dataset.ready) d.innerHTML = '<p class="err pad">Failed to load: ' +
+    (e.message || 'script error') + '</p>';
+});
+</script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

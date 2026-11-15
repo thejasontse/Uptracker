@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+pydantic
+cryptography
+pytest
+httpx  # test-only: starlette's TestClient transport (the app itself uses no HTTP client)
