@@ -21,6 +21,13 @@
 <div id="app">
   <main>
     <div id="canvas"></div>
+    <aside id="dock">
+      <div class="dock-head">
+        <span class="dock-title">Node details</span>
+        <button id="dockToggle" class="ghost small" title="Collapse panel" aria-label="Collapse panel">&raquo;</button>
+      </div>
+      <div id="dockBody"><p class="muted pad">Select a node to see its datasets.</p></div>
+    </aside>
   </main>
   <footer id="tableWrap">
     <div class="query-bar">
@@ -29,6 +36,10 @@
         <option value="">All nodes</option>
       </select>
       <span id="queryStatus" class="q-status"></span>
+      <span class="table-tools">
+        <button id="tableMax" class="ghost small" title="Maximize table" aria-label="Maximize table">&#x26F6;</button>
+        <button id="tableToggle" class="ghost small" title="Collapse table" aria-label="Collapse table">&#x25BE;</button>
+      </span>
     </div>
     <div class="tableScroll">
       <table id="nodesTable">

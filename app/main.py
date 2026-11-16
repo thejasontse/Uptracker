@@ -32,7 +32,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -246,20 +246,36 @@ def patch_node(node_id: str, body: NodePatch) -> dict:
 
 
 @app.post("/api/nodes/{node_id}/run")
-def run_node_now(node_id: str) -> dict:
-    """Queue every enabled dataset of a node for immediate collection.
+def run_node_now(node_id: str, background_tasks: BackgroundTasks) -> dict:
+    """Refresh every enabled dataset of a node right now.
 
-    Sets next_run_at to now so the scheduler's next tick (<= 5 s) claims and
-    runs them in its bounded threadpool. Non-blocking, unlike running each
-    dataset synchronously via POST /api/datasets/{id}/run. No-op while the
-    scheduler is disabled in Settings."""
+    Pulls ``next_run_at`` forward to now (so the periodic scheduler stays in
+    sync and its freshness indicators update), then runs the collection
+    in-process via FastAPI background tasks. Running it here — rather than
+    waiting for the scheduler's next tick — means refresh works even when the
+    scheduler is disabled or paused in Settings. Each dataset collects with
+    its own connection so a slow script never blocks the response."""
     with _conn() as conn:
         _require(conn, "nodes", node_id, "node")
+        ids = [r["id"] for r in conn.execute(
+            "SELECT id FROM datasets WHERE node_id=? AND enabled=1 ORDER BY id",
+            (node_id,),
+        ).fetchall()]
         cur = conn.execute(
             "UPDATE datasets SET next_run_at=? WHERE node_id=? AND enabled=1",
             (db.now_iso(), node_id),
         )
-    return {"ok": True, "queued": cur.rowcount}
+
+    def _run() -> None:
+        for did in ids:
+            try:
+                with db.db_conn() as c2:
+                    collector.collect_dataset(c2, did)
+            except Exception:  # noqa: BLE001 - one bad dataset must not abort the rest
+                pass
+
+    background_tasks.add_task(_run)
+    return {"ok": True, "queued": cur.rowcount, "started": len(ids)}
 
 
 @app.get("/api/network-resources")

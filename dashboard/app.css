@@ -49,6 +49,22 @@ main { flex: 1; display: flex; min-height: 0; position: relative; }
   background: var(--ng-node-bg);
   font: 12px system-ui, sans-serif;
 }
+.dock-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 8px; flex: none;
+  border-bottom: 1px solid var(--ng-node-border);
+  background: var(--ng-header-bg);
+}
+.dock-head .dock-title {
+  flex: 1; font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .05em; color: var(--ng-muted);
+  white-space: nowrap; overflow: hidden;
+}
+/* Collapsed dock: a thin strip showing only the expand button. */
+#dock.collapsed { width: 34px; }
+#dock.collapsed #dockBody,
+#dock.collapsed .dock-title { display: none; }
+#dock.collapsed .dock-head { border-bottom: none; justify-content: center; padding: 5px 2px; }
 #dockBody { flex: 1; overflow-y: auto; }
 #dock h2 { font-size: 13px; font-weight: 600; margin: 0 0 4px; }
 #dock h3 {
@@ -113,7 +129,13 @@ pre.out {
   border-top: 1px solid var(--ng-node-border);
   background: var(--ng-node-bg);
 }
-/* Views bar (dashboard only): pick a saved query. */
+/* Collapsed: only the query bar remains (it holds the expand control). */
+#tableWrap.collapsed { height: auto; }
+#tableWrap.collapsed .tableScroll { display: none; }
+/* Maximized: the table fills the screen; main (canvas + dock) shrinks away. */
+#tableWrap.maximized { flex: 1; height: auto; }
+main.table-max { flex: none; height: 0; overflow: hidden; }
+/* Views bar (dashboard only): pick a saved query, plus table collapse/maximize. */
 .query-bar {
   display: flex; align-items: center; gap: 6px;
   padding: 5px 8px; flex: none;
@@ -123,6 +145,7 @@ pre.out {
 .query-bar label { font-size: 11px; color: var(--ng-muted); flex: none; }
 .query-bar select.q { width: auto; max-width: 240px; }
 .query-bar .q-status { font-size: 10px; color: var(--ng-muted); flex: none; white-space: nowrap; }
+.query-bar .table-tools { margin-left: auto; display: flex; gap: 4px; flex: none; }
 .tableScroll { flex: 1; min-height: 0; overflow: auto; }
 #nodesTable { width: 100%; border-collapse: collapse; font-size: 11px; }
 #nodesTable thead th {
@@ -157,3 +180,21 @@ pre.out {
 .ng-header .ng-btn-refresh:hover { fill: var(--ng-port-in); }
 .ng-btn-spin { animation: ng-spin 0.8s linear infinite; transform-box: fill-box; transform-origin: center; }
 @keyframes ng-spin { to { transform: rotate(360deg); } }
+
+/* Toast — non-blocking feedback (e.g. "Refresh queued"). */
+#sm-toast {
+  position: fixed;
+  bottom: 196px; /* just above the 180px table footer + a little gap */
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  max-width: 80vw;
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: 1px solid var(--ng-node-border);
+  background: var(--ng-node-bg);
+  color: var(--ng-text);
+  box-shadow: 0 4px 16px #00000033;
+  font: 12px system-ui, sans-serif;
+}
+#sm-toast.error { border-color: var(--ng-danger); color: var(--ng-danger); }

@@ -1,9 +1,13 @@
 // Dashboard entry: read-only graph canvas + bottom nodes table + polling.
-// No right dock, no editing, no layout persistence — see js/graph.js.
+// A read-only dock (js/dock.js) shows dataset last-run info for the selected
+// node; no editing. Both the dock and the table collapse/expand, and the table
+// can maximize to fill the screen — states persist in localStorage.
 import { api } from './api.js';
 import { state } from './state.js';
 import { initGraph, loadGraph, paintStatus, onRefreshNode, getEffectiveSelectedNodeIds, onSelectionChanged } from './graph.js';
 import { startPolling, refreshNow } from './poll.js';
+import { initDock } from './dock.js';
+import { toast } from './util.js';
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
   (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -232,6 +236,79 @@ async function initViews() {
   sel.addEventListener('change', () => applyView(sel.value));
 }
 
+// --- dock / table collapse + table maximize (persisted in localStorage) ---
+const DOCK_KEY = 'sm_dock_collapsed';
+const TABLE_COLLAPSED_KEY = 'sm_table_collapsed';
+const TABLE_MAX_KEY = 'sm_table_max';
+
+function applyDockCollapsed(on) {
+  const dock = document.getElementById('dock');
+  const btn = document.getElementById('dockToggle');
+  if (!dock || !btn) return;
+  dock.classList.toggle('collapsed', on);
+  btn.innerHTML = on ? '&laquo;' : '&raquo;';
+  btn.title = on ? 'Expand panel' : 'Collapse panel';
+  btn.setAttribute('aria-label', btn.title);
+}
+
+function applyTableCollapsed(on) {
+  const wrap = document.getElementById('tableWrap');
+  const btn = document.getElementById('tableToggle');
+  if (!wrap || !btn) return;
+  wrap.classList.toggle('collapsed', on);
+  // Chevron points down when expanding (table below), up when collapsing.
+  btn.innerHTML = on ? '&#x25B4;' : '&#x25BE;';
+  btn.title = on ? 'Expand table' : 'Collapse table';
+  btn.setAttribute('aria-label', btn.title);
+}
+
+function applyTableMax(on) {
+  const wrap = document.getElementById('tableWrap');
+  const mainEl = document.querySelector('main');
+  const btn = document.getElementById('tableMax');
+  if (!wrap || !mainEl || !btn) return;
+  wrap.classList.toggle('maximized', on);
+  mainEl.classList.toggle('table-max', on);
+  btn.innerHTML = on ? '&#x2716;' : '&#x26F6;';
+  btn.title = on ? 'Restore table size' : 'Maximize table';
+  btn.setAttribute('aria-label', btn.title);
+}
+
+function initCollapse() {
+  applyDockCollapsed(localStorage.getItem(DOCK_KEY) === '1');
+  applyTableMax(localStorage.getItem(TABLE_MAX_KEY) === '1');
+  // Collapsed and maximized are mutually exclusive; maximize wins if both set.
+  const collapsed = localStorage.getItem(TABLE_COLLAPSED_KEY) === '1'
+    && localStorage.getItem(TABLE_MAX_KEY) !== '1';
+  applyTableCollapsed(collapsed);
+
+  document.getElementById('dockToggle')?.addEventListener('click', () => {
+    const on = !document.getElementById('dock').classList.contains('collapsed');
+    localStorage.setItem(DOCK_KEY, on ? '1' : '0');
+    applyDockCollapsed(on);
+  });
+  document.getElementById('tableToggle')?.addEventListener('click', () => {
+    const wrap = document.getElementById('tableWrap');
+    const on = !wrap.classList.contains('collapsed');
+    if (on && wrap.classList.contains('maximized')) {
+      localStorage.setItem(TABLE_MAX_KEY, '0');
+      applyTableMax(false);
+    }
+    localStorage.setItem(TABLE_COLLAPSED_KEY, on ? '1' : '0');
+    applyTableCollapsed(on);
+  });
+  document.getElementById('tableMax')?.addEventListener('click', () => {
+    const wrap = document.getElementById('tableWrap');
+    const on = !wrap.classList.contains('maximized');
+    if (on && wrap.classList.contains('collapsed')) {
+      localStorage.setItem(TABLE_COLLAPSED_KEY, '0');
+      applyTableCollapsed(false);
+    }
+    localStorage.setItem(TABLE_MAX_KEY, on ? '1' : '0');
+    applyTableMax(on);
+  });
+}
+
 async function boot() {
   const snap = await api.snapshot();
   state.setSnapshot(snap);
@@ -252,19 +329,27 @@ async function boot() {
   // Keep the bottom table in sync with the canvas selection.
   onSelectionChanged(() => renderTable());
 
-  // Node refresh glyph → queue all of the node's enabled datasets for
-  // collection (the scheduler picks them up on its next tick), then pull a
-  // fresh snapshot so the status colours / table update promptly.
+  // Node refresh glyph → collect all of the node's enabled datasets now
+  // (in-process on the server, so it works even when the scheduler is off),
+  // then pull a fresh snapshot so the status colours / table update promptly.
   onRefreshNode(async (nodeId) => {
     try {
-      await api.runNode(nodeId);
+      const res = await api.runNode(nodeId);
+      if (!res || res.started === 0) {
+        toast('No enabled datasets to refresh', 'error');
+      } else {
+        toast(`Refreshing ${res.started} dataset${res.started === 1 ? '' : 's'}…`);
+      }
     } catch (e) {
-      console.error(`queue collection for ${nodeId} failed`, e);
+      console.error(`refresh node ${nodeId} failed`, e);
+      toast('Refresh failed', 'error');
     }
     try { await refreshNow(); } catch { /* poll will catch up */ }
   });
 
   initTableSort();
+  initDock();
+  initCollapse();
   startPolling();
   initViews();
 

@@ -226,7 +226,9 @@ def test_run_node_queues_enabled_datasets(client):
 
     r = client.post("/api/nodes/n1/run")
     assert r.status_code == 200
-    assert r.json() == {"ok": True, "queued": 1}  # only the enabled dataset
+    # only the enabled dataset is collected, in-process (started) even with the
+    # scheduler disabled.
+    assert r.json() == {"ok": True, "queued": 1, "started": 1}
 
 
 def test_run_node_missing(client):
@@ -437,7 +439,9 @@ def test_admin_bundle_served(client):
 def test_dashboard_bundle_served(client):
     r = client.get("/dashboard/")
     assert r.status_code == 200
-    assert "dock" not in r.text  # read-only: no right panel
+    # Read-only: has the details dock but no admin editing modules.
+    assert client.get("/dashboard/js/dock.js").status_code == 200
+    assert "editor.js" not in r.text
     assert client.get("/dashboard/app.css").status_code == 200
     assert client.get("/dashboard/js/app.js").status_code == 200
     assert client.get("/dashboard/vendor/nodegraph.js").status_code == 200

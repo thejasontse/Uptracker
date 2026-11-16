@@ -49,6 +49,22 @@ main { flex: 1; display: flex; min-height: 0; position: relative; }
   background: var(--ng-node-bg);
   font: 12px system-ui, sans-serif;
 }
+.dock-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 8px; flex: none;
+  border-bottom: 1px solid var(--ng-node-border);
+  background: var(--ng-header-bg);
+}
+.dock-head .dock-title {
+  flex: 1; font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .05em; color: var(--ng-muted);
+  white-space: nowrap; overflow: hidden;
+}
+/* Collapsed dock: a thin strip showing only the expand button. */
+#dock.collapsed { width: 34px; }
+#dock.collapsed #dockBody,
+#dock.collapsed .dock-title { display: none; }
+#dock.collapsed .dock-head { border-bottom: none; justify-content: center; padding: 5px 2px; }
 #dockBody { flex: 1; overflow-y: auto; }
 
 /* Folder tabs — the home view's primary navigation (settings/credentials/
@@ -174,6 +190,12 @@ pre.out {
   border-top: 1px solid var(--ng-node-border);
   background: var(--ng-node-bg);
 }
+/* Collapsed: only the query bar remains (it holds the expand control). */
+#tableWrap.collapsed { height: auto; }
+#tableWrap.collapsed .tableScroll { display: none; }
+/* Maximized: the table fills the screen; main (canvas + dock) shrinks away. */
+#tableWrap.maximized { flex: 1; height: auto; }
+main.table-max { flex: none; height: 0; overflow: hidden; }
 /* Query bar (admin only): ad-hoc SQL + saved "Views". */
 .query-bar {
   display: flex; align-items: center; gap: 6px;
@@ -189,6 +211,7 @@ pre.out {
 /* Row count reserves room for a 4-digit total so the bar never reflows as the
    count changes width (e.g. "9 rows" → "1000 rows"). */
 .query-bar .q-status { font-size: 10px; color: var(--ng-muted); flex: none; min-width: 9ch; text-align: right; white-space: nowrap; }
+.query-bar .table-tools { margin-left: auto; display: flex; gap: 4px; flex: none; }
 .tableScroll { flex: 1; min-height: 0; overflow: auto; }
 #nodesTable { width: 100%; border-collapse: collapse; font-size: 11px; }
 #nodesTable thead th {

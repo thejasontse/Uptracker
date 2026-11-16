@@ -253,6 +253,79 @@ function initQueryBar() {
   });
 }
 
+// --- dock / table collapse + table maximize (persisted in localStorage) ---
+const DOCK_KEY = 'sm_dock_collapsed';
+const TABLE_COLLAPSED_KEY = 'sm_table_collapsed';
+const TABLE_MAX_KEY = 'sm_table_max';
+
+function applyDockCollapsed(on) {
+  const dock = document.getElementById('dock');
+  const btn = document.getElementById('dockToggle');
+  if (!dock || !btn) return;
+  dock.classList.toggle('collapsed', on);
+  btn.innerHTML = on ? '&laquo;' : '&raquo;';
+  btn.title = on ? 'Expand panel' : 'Collapse panel';
+  btn.setAttribute('aria-label', btn.title);
+}
+
+function applyTableCollapsed(on) {
+  const wrap = document.getElementById('tableWrap');
+  const btn = document.getElementById('tableToggle');
+  if (!wrap || !btn) return;
+  wrap.classList.toggle('collapsed', on);
+  // Chevron points down when expanding (table below), up when collapsing.
+  btn.innerHTML = on ? '&#x25B4;' : '&#x25BE;';
+  btn.title = on ? 'Expand table' : 'Collapse table';
+  btn.setAttribute('aria-label', btn.title);
+}
+
+function applyTableMax(on) {
+  const wrap = document.getElementById('tableWrap');
+  const mainEl = document.querySelector('main');
+  const btn = document.getElementById('tableMax');
+  if (!wrap || !mainEl || !btn) return;
+  wrap.classList.toggle('maximized', on);
+  mainEl.classList.toggle('table-max', on);
+  btn.innerHTML = on ? '&#x2716;' : '&#x26F6;';
+  btn.title = on ? 'Restore table size' : 'Maximize table';
+  btn.setAttribute('aria-label', btn.title);
+}
+
+function initCollapse() {
+  applyDockCollapsed(localStorage.getItem(DOCK_KEY) === '1');
+  applyTableMax(localStorage.getItem(TABLE_MAX_KEY) === '1');
+  // Collapsed and maximized are mutually exclusive; maximize wins if both set.
+  const collapsed = localStorage.getItem(TABLE_COLLAPSED_KEY) === '1'
+    && localStorage.getItem(TABLE_MAX_KEY) !== '1';
+  applyTableCollapsed(collapsed);
+
+  document.getElementById('dockToggle')?.addEventListener('click', () => {
+    const on = !document.getElementById('dock').classList.contains('collapsed');
+    localStorage.setItem(DOCK_KEY, on ? '1' : '0');
+    applyDockCollapsed(on);
+  });
+  document.getElementById('tableToggle')?.addEventListener('click', () => {
+    const wrap = document.getElementById('tableWrap');
+    const on = !wrap.classList.contains('collapsed');
+    if (on && wrap.classList.contains('maximized')) {
+      localStorage.setItem(TABLE_MAX_KEY, '0');
+      applyTableMax(false);
+    }
+    localStorage.setItem(TABLE_COLLAPSED_KEY, on ? '1' : '0');
+    applyTableCollapsed(on);
+  });
+  document.getElementById('tableMax')?.addEventListener('click', () => {
+    const wrap = document.getElementById('tableWrap');
+    const on = !wrap.classList.contains('maximized');
+    if (on && wrap.classList.contains('collapsed')) {
+      localStorage.setItem(TABLE_COLLAPSED_KEY, '0');
+      applyTableCollapsed(false);
+    }
+    localStorage.setItem(TABLE_MAX_KEY, on ? '1' : '0');
+    applyTableMax(on);
+  });
+}
+
 async function boot() {
   const snap = await api.snapshot();
   state.setSnapshot(snap);
@@ -278,6 +351,7 @@ async function boot() {
   initPanel();
   initQueryBar();
   initTableSort();
+  initCollapse();
   refreshSavedQueries();
   showColumnsHint();
 
