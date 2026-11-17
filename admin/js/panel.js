@@ -125,11 +125,6 @@ function nodeHtml(n) {
 }
 
 function datasetCard(d) {
-  const metrics = d.metrics.map((m) => {
-    const v = m.value;
-    const val = v ? `<span class="pill" style="background:${v.status_color}">${esc(v.status)}</span> <b>${esc(v.txt ?? v.num ?? '—')}</b>${esc(m.unit || '')}` : '<span class="muted">no data</span>';
-    return `<div class="kv"><span class="k">${esc(m.name)}${m.rules.length ? ` <span class="muted">·${m.rules.length}</span>` : ''}</span><span>${val}</span></div>`;
-  }).join('');
   return `
   <div class="card">
     <div class="head">
@@ -140,7 +135,6 @@ function datasetCard(d) {
       <button class="small" data-act="edit" data-ds="${d.id}">Edit</button>
       <button class="small danger" data-act="delDs" data-ds="${d.id}">×</button>
     </div>
-    ${metrics}
     ${d.last_error ? `<div class="err">last run: ${esc(d.last_error)}</div>` : ''}
     ${d.last_run_at ? `<div class="kv"><span class="k">last run</span><span>${esc(d.last_run_at)}</span></div>` : ''}
     ${d.credential ? `<div class="kv"><span class="k">credential</span><span>🔒 ${esc(d.credential.name)}</span></div>` : ''}

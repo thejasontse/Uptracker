@@ -44,27 +44,27 @@ main { flex: 1; display: flex; min-height: 0; position: relative; }
 
 /* Dock — mirrors the nodegraph menu/panel surface */
 #dock {
+  position: relative;
+  margin-left: 14px; /* room for the collapse tab, which sits outside on the left */
   width: var(--dock-w); display: flex; flex-direction: column;
   border-left: 1px solid var(--ng-node-border);
   background: var(--ng-node-bg);
   font: 12px system-ui, sans-serif;
 }
-.dock-head {
-  display: flex; align-items: center; gap: 6px;
-  padding: 5px 8px; flex: none;
-  border-bottom: 1px solid var(--ng-node-border);
-  background: var(--ng-header-bg);
+/* Collapse toggle is a thin tab sticking out of the dock's left edge — no header bar. */
+#dock .dock-corner {
+  position: absolute; top: 50%; transform: translateY(-50%); right: 100%; z-index: 2;
+  width: 14px; height: 48px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--ng-node-border); border-right: none;
+  border-radius: 4px 0 0 4px;
+  background: var(--ng-header-bg); color: var(--ng-muted);
+  font-size: 12px; line-height: 1; cursor: pointer;
 }
-.dock-head .dock-title {
-  flex: 1; font-size: 11px; font-weight: 600;
-  text-transform: uppercase; letter-spacing: .05em; color: var(--ng-muted);
-  white-space: nowrap; overflow: hidden;
-}
-/* Collapsed dock: a thin strip showing only the expand button. */
-#dock.collapsed { width: 34px; }
-#dock.collapsed #dockBody,
-#dock.collapsed .dock-title { display: none; }
-#dock.collapsed .dock-head { border-bottom: none; justify-content: center; padding: 5px 2px; }
+#dock .dock-corner:hover { color: var(--ng-fg, #fff); }
+/* Collapsed dock: no panel surface at all — only the tab sticks out. */
+#dock.collapsed { width: 0; border-left: none; background: transparent; }
+#dock.collapsed #dockBody { display: none; }
 #dockBody { flex: 1; overflow-y: auto; }
 #dock h2 { font-size: 13px; font-weight: 600; margin: 0 0 4px; }
 #dock h3 {

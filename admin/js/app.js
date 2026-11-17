@@ -263,7 +263,7 @@ function applyDockCollapsed(on) {
   const btn = document.getElementById('dockToggle');
   if (!dock || !btn) return;
   dock.classList.toggle('collapsed', on);
-  btn.innerHTML = on ? '&laquo;' : '&raquo;';
+  btn.innerHTML = on ? '&rsaquo;' : '&lsaquo;';
   btn.title = on ? 'Expand panel' : 'Collapse panel';
   btn.setAttribute('aria-label', btn.title);
 }
