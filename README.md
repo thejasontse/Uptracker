@@ -109,11 +109,19 @@ ProxyPassReverse /dashboard http://127.0.0.1:8090/dashboard
 
 Uptracker is a Python/uvicorn app, so on Windows it runs as a background process
 and IIS fronts it as a reverse proxy. Prerequisites: install **URL Rewrite** and
-**Application Request Routing (ARR)**, then enable *Proxy* in the ARR feature.
+**Application Request Routing (ARR)** (both via the Web Platform Installer).
 
 1. Run Uptracker on the server (e.g. via NSSM or Task Scheduler so it starts at
    boot): `uvicorn app.main:app --host 127.0.0.1 --port 8090`.
-2. In IIS, add a **URL Rewrite** inbound rule per path to forward to the app:
+2. **Enable the ARR proxy — this is required and off by default.** Select the
+   *server* node (not the site) → **Application Request Routing Cache** →
+   right-click → **Server Proxy Settings** → check **Enable proxy** → Apply.
+   Without this, IIS has no handler for the path and returns **404** even though
+   uvicorn answers fine on `localhost:8090`.
+3. In IIS, add a **URL Rewrite** inbound rule per path to forward to the app.
+   Forward the **full path** with `{R:1}` so `/admin/api/...` and
+   `/dashboard/api/...` reach uvicorn intact (the app's prefix middleware and
+   relative-URL `<base>` fixer depend on this):
 
 ```xml
 <system.webServer>
@@ -134,8 +142,35 @@ and IIS fronts it as a reverse proxy. Prerequisites: install **URL Rewrite** and
 </system.webServer>
 ```
 
-3. Enable **Basic Authentication** for the site and add an *Authorization* rule
+4. Enable **Basic Authentication** for the site and add an *Authorization* rule
    restricting `/admin` to your users. Terminate TLS with an HTTPS binding.
+
+#### Troubleshooting IIS 404s
+
+If `localhost:8090` works directly but the proxied URL returns 404, the request
+isn't reaching uvicorn — it's an ARR/rewrite config issue, not an app bug.
+Isolate it by comparing direct vs. proxied responses:
+
+```bash
+# Backend directly (expect 200 / 307):
+curl -i http://localhost:8090/dashboard/
+curl -i http://localhost:8090/admin/api/snapshot
+# Through IIS (site binding, e.g. port 80/443):
+curl -i http://localhost/dashboard/
+curl -i http://localhost/admin/api/snapshot
+```
+
+- Direct works, proxied **404** → ARR proxy not enabled (step 2) or the rewrite
+  rule isn't matching. Confirm **Enable proxy** is checked and the rule is on
+  the correct *site* (rules defined per-site only apply to that site).
+- Proxied **500.x / "URL Rewrite Module Error"** → a server variable such as
+  `HTTP_X_FORWARDED_HOST` isn't delegatable; add it under ARR → **Server
+  Variables** with *Allowed = True*.
+- Page loads but only `/admin/api/...` (or `/dashboard/api/...`) 404s → the rule
+  is mangling the path; make sure `{R:1}` forwards the full remaining path.
+- Proxying under a sub-path (e.g. `https://host/uptracker/`): match and strip the
+  prefix, e.g. `<match url="^uptracker/(dashboard/.*)$" />` →
+  `url="http://127.0.0.1:8090/{R:1}"`.
 
 ## Test
 
