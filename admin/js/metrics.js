@@ -5,19 +5,64 @@
 import { api } from './api.js';
 import { state } from './state.js';
 import { breadcrumb, esc, toast } from './util.js';
+import {
+  scanParams, paramValueMap, substituteParams,
+  paintParamFields, attachParamAutocomplete,
+} from './params.js';
 
 let draft = null;        // working copy of the dataset's metrics
 let original = null;     // snapshot metrics at load (for the diff)
 let dataset = null;      // the dataset row (script/method for test run)
+let nodeRef = null;      // the owning node (for [Param] auto-fill)
 let ctx = null;          // { go, onSaved } from the panel router
 let lastTest = null;     // { [metricName]: parsedEntry } from the most recent test run
+let paramValues = {};    // user-entered [Param] values, keyed by display name
+let rawOut = '';         // raw script output shown for regex building (last run / test)
+
+// All [Param] names referenced across the draft: the dataset script plus every
+// metric name/regex/unit. Mirrors the backend scan so a token gets an input.
+function draftParamNames() {
+  const texts = [dataset && dataset.script];
+  for (const m of draft) texts.push(m.name, m.regex, m.unit);
+  return scanParams(texts.filter((t) => typeof t === 'string'));
+}
+
+// The most recent raw output to show for regex building: a fresh test run wins,
+// otherwise the dataset's last persisted collection output.
+function initialRaw() {
+  if (rawOut) return rawOut;
+  return (dataset && dataset.last_output) || '';
+}
+
+function paintRaw() {
+  const box = document.getElementById('rawBox');
+  if (!box) return;
+  const txt = initialRaw();
+  if (!txt) { box.hidden = true; return; }
+  box.hidden = false;
+  const src = rawOut ? 'latest test run' : 'last collected run';
+  box.querySelector('#rawSrc').textContent = src;
+  box.querySelector('#rawPre').textContent = txt;
+}
+
+function refreshParams() {
+  const names = draftParamNames();
+  paintParamFields(
+    document.getElementById('mpParams'),
+    document.getElementById('mpParamFields'),
+    names, nodeRef, paramValues,
+  );
+}
 
 export function renderMetricsView(body, node, ds, navCtx) {
   dataset = ds;
+  nodeRef = node;
   ctx = navCtx;
   original = JSON.parse(JSON.stringify(ds.metrics));
   draft = JSON.parse(JSON.stringify(ds.metrics));
   lastTest = null;
+  paramValues = ds && ds.param_values ? { ...ds.param_values } : {};
+  rawOut = '';
 
   body.innerHTML = `
   <div class="section">
@@ -29,9 +74,17 @@ export function renderMetricsView(body, node, ds, navCtx) {
     ])}
     <p class="muted">Each metric mines the dataset's raw output with a regex capture group.
       Add rules to a metric to turn its value into a status.</p>
+    <div id="mpParams" class="card" hidden>
+      <div class="head"><span class="t">Parameters</span><span class="muted">[Name] tokens are saved as-is and filled in at collection time</span></div>
+      <div id="mpParamFields"></div>
+    </div>
     <div class="row"><button id="btnNewMetric" class="small">+ Metric</button>
       <button id="btnTest" class="small">Test run</button>
       <span id="testOut" class="muted"></span></div>
+    <div id="rawBox" class="card" hidden>
+      <div class="head"><span class="t">Raw output</span><span id="rawSrc" class="muted"></span></div>
+      <pre id="rawPre" class="out"></pre>
+    </div>
     <div id="metricList"></div>
     <div class="row" style="margin-top:12px">
       <span style="flex:1"></span>
@@ -40,9 +93,12 @@ export function renderMetricsView(body, node, ds, navCtx) {
   </div>`;
 
   renderMetrics();
+  refreshParams();
+  paintRaw();
   body.querySelector('#btnNewMetric').onclick = () => {
     draft.push({ id: null, name: 'metric', regex: 'value=(\\d+)', group_index: 1, cast: 'auto', unit: '', rules: [], alert: null });
     renderMetrics();
+    refreshParams();
   };
   body.querySelector('#btnTest').onclick = () => testRun();
   body.querySelector('#btnSave').onclick = async () => {
@@ -81,7 +137,12 @@ function renderMetrics() {
   list.querySelectorAll('[data-field]').forEach((el) => {
     el.onchange = () => { draft[Number(el.dataset.mi)][el.dataset.field] = el.type === 'number' ? Number(el.value) : el.value; };
   });
-  list.querySelectorAll('[data-del]').forEach((el) => { el.onclick = () => { draft.splice(Number(el.dataset.mi), 1); renderMetrics(); }; });
+  // [Param] autocomplete on the free-text fields; picking a token re-scans so
+  // its value input appears in the Parameters panel.
+  list.querySelectorAll('[data-field="name"], [data-field="regex"], [data-field="unit"]').forEach((el) => {
+    attachParamAutocomplete(el, () => refreshParams());
+  });
+  list.querySelectorAll('[data-del]').forEach((el) => { el.onclick = () => { draft.splice(Number(el.dataset.mi), 1); renderMetrics(); refreshParams(); }; });
   list.querySelectorAll('[data-rules]').forEach((el) => {
     el.onclick = async () => {
       const mi = Number(el.dataset.mi);
@@ -98,16 +159,21 @@ function renderMetrics() {
 async function testRun() {
   const out = document.getElementById('testOut');
   out.textContent = 'running…';
+  // The dry-run endpoint does not resolve [Param] tokens, so substitute the
+  // current values client-side before sending the draft.
+  const values = paramValueMap(nodeRef, paramValues);
   try {
     const res = await api.testRun({
-      method: dataset.method, script: dataset.script, timeout_s: dataset.timeout_s,
+      method: dataset.method, script: substituteParams(dataset.script, values), timeout_s: dataset.timeout_s,
       credential_id: dataset.credential ? dataset.credential.id : null,
-      metrics: draft.map((m) => ({ name: m.name, regex: m.regex, group_index: m.group_index, cast: m.cast })),
+      metrics: draft.map((m) => ({ name: m.name, regex: substituteParams(m.regex, values), group_index: m.group_index, cast: m.cast })),
     });
     out.innerHTML = res.ok ? '<span class="ok">ok</span>' : `<span class="err">${esc(res.error || 'failed')}</span>`;
     lastTest = {};
     for (const p of (res.parsed || [])) lastTest[p.name] = p;
+    rawOut = res.raw || '';
     renderMetrics();
+    paintRaw();
   } catch (e) { out.textContent = e.message; }
 }
 

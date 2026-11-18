@@ -19,7 +19,20 @@ let editorNode = null;   // node being edited (for [Param] auto-fill)
 let tplActive = null;    // dataset template payload currently applied to the draft
 let paramValues = {};    // user-entered [Param] values, keyed by display name
 
-// Deep copy of the draft with every [Param] token replaced by its value.
+// All [Param] names referenced anywhere in the draft: the dataset name/script
+// plus every metric name/regex/unit and rule value. Mirrors the backend scan in
+// templates._dataset_param_texts so a token in a metric/rule field gets an input.
+function draftParamNames() {
+  const texts = [draft.name, draft.script];
+  for (const m of draft.metrics || []) {
+    texts.push(m.name, m.regex, m.unit);
+    for (const r of m.rules || []) texts.push(r.value);
+  }
+  return scanParams(texts);
+}
+
+// Deep copy of the draft with every [Param] token replaced by its value. Used
+// only for local dry-runs (Test run) — persisted data keeps the raw tokens.
 function resolveDraft(d, values) {
   const out = JSON.parse(JSON.stringify(d));
   out.name = substituteParams(out.name, values);
@@ -40,7 +53,9 @@ export function renderDatasetEditor(body, node, ds, ctx) {
   draft.secret = null;
   editorNode = node;
   tplActive = null;
-  paramValues = {};
+  // Repopulate saved [Param] values (stored raw on the dataset) so re-opening
+  // an existing dataset shows the last-entered values, not blanks.
+  paramValues = ds && ds.param_values ? { ...ds.param_values } : {};
 
   body.innerHTML = `
   <div class="section">
@@ -55,7 +70,7 @@ export function renderDatasetEditor(body, node, ds, ctx) {
     <textarea id="dsScript" placeholder="e.g. curl -s http://{{node.network_path}}/health">${esc(draft.script)}</textarea>
     <p class="muted">Protocol probes are ordinary commands — <code>ping -c1 host</code>, <code>nc -z host 443</code>, <code>curl -s url</code>. Credentials are available to the script as <code>$SM_USER</code> / <code>$SM_SECRET</code>.</p>
     <div id="tplParams" class="card" hidden>
-      <div class="head"><span class="t">Parameters</span><span class="muted">[Name] tokens in name/script</span></div>
+      <div class="head"><span class="t">Parameters</span><span class="muted">[Name] tokens are saved as-is and filled in at collection time</span></div>
       <div id="tplParamFields"></div>
     </div>
     <div class="row">
@@ -137,7 +152,7 @@ function applyTemplateToDraft(t) {
 // params (label/id/network-path/network-resource) are prefilled; the rest start empty.
 function refreshParams() {
   collectDraft();
-  const names = scanParams([draft.name, draft.script]);
+  const names = draftParamNames();
   paintParamFields(
     document.getElementById('tplParams'),
     document.getElementById('tplParamFields'),
@@ -169,12 +184,14 @@ function collectDraft() {
   if (secret) draft.secret = secret;
 }
 
-// Validate every [Param] token has a value, then return the draft with tokens
-// baked in. Returns null (and flags the offending inputs) if any are missing.
-function resolvedDraft() {
+// Validate every [Param] token has a value. Returns the merged values map (for
+// local dry-runs) or null when any are blank — in which case the offending
+// inputs are flagged and nothing is saved. The stored data keeps the raw tokens;
+// only Test run resolves them locally, and the backend resolves at collection.
+function validateParams() {
   collectDraft();
-  const paramNames = scanParams([draft.name, draft.script]);
-  if (!paramNames.length) return draft;
+  const paramNames = draftParamNames();
+  if (!paramNames.length) return {};
   const values = paramValueMap(editorNode, paramValues);
   const missing = paramNames.filter((n) => !String(values[n.toLowerCase()] ?? '').trim());
   if (missing.length) {
@@ -184,14 +201,26 @@ function resolvedDraft() {
     });
     return null;
   }
-  return resolveDraft(draft, values);
+  return values;
+}
+
+// The user-entered [Param] values keyed by display name, limited to the tokens
+// actually referenced by the draft. Persisted verbatim (not resolved) so the
+// backend can substitute them at execution time.
+function paramValuesPayload() {
+  const out = {};
+  for (const name of draftParamNames()) {
+    if (paramValues[name] !== undefined && String(paramValues[name]).trim()) out[name] = paramValues[name];
+  }
+  return out;
 }
 
 async function testRun() {
   const out = document.getElementById('testOut');
   const box = document.getElementById('testResult');
-  const run = resolvedDraft();
-  if (!run) return;
+  const values = validateParams();
+  if (!values) return;
+  const run = resolveDraft(draft, values);
   out.textContent = 'running…';
   try {
     const res = await api.testRun({
@@ -204,23 +233,33 @@ async function testRun() {
   } catch (e) { out.textContent = e.message; }
 }
 
-// Save the dataset, then navigate. `then` is 'node' (Save) or 'metrics'
-// (Add Metrics / Metrics). For a new dataset, any template-provided metrics
-// are created too so they appear on the Metrics page.
+// Save the dataset. The stored name/script keep their [Param] tokens; the
+// entered values go up as `param_values` for the backend to resolve at
+// collection time. `then` is 'node' (Save: stay in place + toast) or 'metrics'
+// (Add Metrics / Metrics: navigate). For a new dataset, template-provided
+// metrics are created too (with their tokens intact) so they show on the Metrics page.
 async function commit(node, ds, ctx, then) {
-  const out = resolvedDraft();
-  if (!out) return;
+  const values = validateParams();
+  if (!values) return;
+  collectDraft();
   const body = {
-    name: out.name, method: out.method, script: out.script,
-    timeout_s: out.timeout_s, interval_s: out.interval_s, enabled: out.enabled,
-    credential_id: out.credential_id, secret: out.secret,
+    name: draft.name, method: draft.method, script: draft.script,
+    timeout_s: draft.timeout_s, interval_s: draft.interval_s, enabled: draft.enabled,
+    credential_id: draft.credential_id, secret: draft.secret,
+    param_values: paramValuesPayload(),
   };
   try {
     const saved = ds ? await api.patchDataset(ds.id, body) : await api.createDataset(node.id, body);
-    if (!ds) await createTemplateMetrics(saved.id, out.metrics);
+    if (!ds) await createTemplateMetrics(saved.id, draft.metrics);
     await ctx.onSaved();
-    if (then === 'metrics') ctx.go({ view: 'metrics', dsId: saved.id, nodeId: node.id });
-    else ctx.go({ view: 'node', nodeId: node.id });
+    if (then === 'metrics') {
+      ctx.go({ view: 'metrics', dsId: saved.id, nodeId: node.id });
+    } else {
+      // Save keeps the editor open so further edits are possible; confirm with a
+      // toast and re-seed from the server copy (ids/tokens/values stay in sync).
+      paramValues = saved.param_values ? { ...saved.param_values } : paramValues;
+      toast('Dataset saved.', 'success');
+    }
   } catch (e) {
     if (e.status === 428) {
       // Credential guard: prompt inline for the secret, then retry once.
@@ -235,8 +274,9 @@ async function commit(node, ds, ctx, then) {
   }
 }
 
-// Create a new dataset's metrics (and their rules) from the resolved draft.
-// Only used on create — editing metrics happens on the Metrics/Rules pages.
+// Create a new dataset's metrics (and their rules) from the draft, keeping any
+// [Param] tokens intact for backend resolution. Only used on create — editing
+// metrics happens on the Metrics/Rules pages.
 async function createTemplateMetrics(datasetId, metrics) {
   for (const m of metrics) {
     const mid = (await api.createMetric(datasetId, {
@@ -248,16 +288,20 @@ async function createTemplateMetrics(datasetId, metrics) {
   }
 }
 
+// Snapshot the current draft as a reusable dataset template. [Param] tokens are
+// preserved verbatim (only {{node.*}} mustaches were resolved when a template
+// was applied), so each future apply re-fills them per node.
 async function saveAsTemplate(node) {
-  const out = resolvedDraft();
-  if (!out) return;
+  const values = validateParams();
+  if (!values) return;
+  collectDraft();
   const name = prompt('Template name:');
   if (!name) return;
   const payload = {
     network_resource: node.network_resource,
-    name: out.name, method: out.method, script: out.script,
-    timeout_s: out.timeout_s, interval_s: out.interval_s,
-    metrics: out.metrics.map((m) => ({ name: m.name, regex: m.regex, group_index: m.group_index, cast: m.cast, unit: m.unit, rules: m.rules.map((r) => ({ op: r.op, value: r.value, status_level_id: r.status_level_id, priority: r.priority })) })),
+    name: draft.name, method: draft.method, script: draft.script,
+    timeout_s: draft.timeout_s, interval_s: draft.interval_s,
+    metrics: draft.metrics.map((m) => ({ name: m.name, regex: m.regex, group_index: m.group_index, cast: m.cast, unit: m.unit, rules: m.rules.map((r) => ({ op: r.op, value: r.value, status_level_id: r.status_level_id, priority: r.priority })) })),
   };
   try { await api.saveTemplate({ name, template_type: 'dataset', payload }); toast('Template saved.'); }
   catch (e) { toast(e.message, 'error'); }

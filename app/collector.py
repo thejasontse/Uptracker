@@ -6,10 +6,11 @@ runs and by the API for manual "run now" / "test" actions.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
 
-from . import db, executor, mailer, rules as rules_mod
+from . import db, executor, mailer, rules as rules_mod, templates
 from .crypto import secret_box
 from .parser import ParsedValue, extract
 
@@ -27,6 +28,8 @@ def refresh_metric_status(conn: sqlite3.Connection, metric_id: int) -> None:
     if not m:
         return
     val = conn.execute("SELECT raw, num, txt FROM metric_values WHERE metric_id=?", (metric_id,)).fetchone()
+    ds = conn.execute("SELECT * FROM datasets WHERE id=?", (m["dataset_id"],)).fetchone()
+    pvals = _param_values(conn, ds) if ds else {}
     levels, unknown_id = _load_status_levels(conn)
     ranks = {lid: lv["rank"] for lid, lv in levels.items()}
     if val is None:
@@ -35,7 +38,8 @@ def refresh_metric_status(conn: sqlite3.Connection, metric_id: int) -> None:
     else:
         pv = ParsedValue(val["raw"], val["num"], val["txt"])
         rule_rows = [
-            rules_mod.RuleRow(r["id"], r["op"], r["value"], r["status_level_id"], r["priority"])
+            rules_mod.RuleRow(r["id"], r["op"], templates.render_params(r["value"] or "", pvals),
+                              r["status_level_id"], r["priority"])
             for r in conn.execute("SELECT * FROM rules WHERE metric_id=?", (metric_id,)).fetchall()
         ]
         sid = rules_mod.evaluate_metric(rule_rows, pv, ranks)
@@ -45,7 +49,6 @@ def refresh_metric_status(conn: sqlite3.Connection, metric_id: int) -> None:
         "UPDATE metric_values SET status_level_id=? WHERE metric_id=?",
         (sid, metric_id),
     )
-    ds = conn.execute("SELECT node_id FROM datasets WHERE id=?", (m["dataset_id"],)).fetchone()
     if ds:
         recompute_node_status(conn, ds["node_id"])
 
@@ -74,6 +77,37 @@ def _get_secret(conn: sqlite3.Connection, credential_id: int | None) -> tuple[st
     return secret_box().decrypt(row["secret_enc"]), row["username"]
 
 
+def _param_values(conn: sqlite3.Connection, ds) -> dict[str, str]:
+    """Build the ``[Param]`` resolution map for a dataset at execution time.
+
+    Node-derived parameters (Host/Port/Protocol/…) seed the map, then the
+    dataset's saved ``param_values`` override them (case-insensitively). A
+    token with no entry is left untouched by :func:`templates.render_params`.
+    """
+    node = conn.execute("SELECT * FROM nodes WHERE id=?", (ds["node_id"],)).fetchone()
+    vals: dict[str, str] = {}
+    if node is not None:
+        vals.update(templates.known_params(node))
+    try:
+        saved = json.loads((ds["param_values"] if "param_values" in ds.keys() else "{}") or "{}")
+    except (ValueError, TypeError):
+        saved = {}
+    if isinstance(saved, dict):
+        # ``render_params`` looks tokens up by lower-cased name, so store the
+        # saved overrides under a lower-cased key too (known_params already is).
+        for k, v in saved.items():
+            vals[str(k).lower()] = "" if v is None else str(v)
+    return vals
+
+
+def _resolve(conn: sqlite3.Connection, ds, text) -> str:
+    """Fully resolve a stored template string for execution: ``{{mustache}}``
+    node fields first, then ``[Param]`` tokens."""
+    node = conn.execute("SELECT * FROM nodes WHERE id=?", (ds["node_id"],)).fetchone()
+    ctx = templates.node_context(node) if node is not None else {}
+    return templates.render_params(templates.render(text or "", ctx), _param_values(conn, ds))
+
+
 def collect_dataset(conn: sqlite3.Connection, dataset_id: int, *, persist: bool = True) -> dict:
     """Run one dataset and update latest values + node status.
 
@@ -84,17 +118,21 @@ def collect_dataset(conn: sqlite3.Connection, dataset_id: int, *, persist: bool 
         return {"ok": False, "error": "dataset not found", "metrics": []}
 
     secret, username = _get_secret(conn, ds["credential_id"])
-    result = executor.run_dataset(ds["method"], ds["script"], ds["timeout_s"], secret, username)
+    script = _resolve(conn, ds, ds["script"])
+    result = executor.run_dataset(ds["method"], script, ds["timeout_s"], secret, username)
 
     levels, unknown_id = _load_status_levels(conn)
     ranks = {lid: lv["rank"] for lid, lv in levels.items()}
     outcomes: list[MetricOutcome] = []
 
+    pvals = _param_values(conn, ds)
     metrics = conn.execute("SELECT * FROM metrics WHERE dataset_id=?", (dataset_id,)).fetchall()
     for m in metrics:
-        value = extract(result.raw, m["regex"], m["group_index"], m["cast"])
+        regex = templates.render_params(m["regex"] or "", pvals)
+        value = extract(result.raw, regex, m["group_index"], m["cast"])
         rule_rows = [
-            rules_mod.RuleRow(r["id"], r["op"], r["value"], r["status_level_id"], r["priority"])
+            rules_mod.RuleRow(r["id"], r["op"], templates.render_params(r["value"] or "", pvals),
+                              r["status_level_id"], r["priority"])
             for r in conn.execute("SELECT * FROM rules WHERE metric_id=?", (m["id"],)).fetchall()
         ]
         status_id = rules_mod.evaluate_metric(rule_rows, value, ranks)
@@ -115,8 +153,8 @@ def collect_dataset(conn: sqlite3.Connection, dataset_id: int, *, persist: bool 
 
     if persist:
         conn.execute(
-            "UPDATE datasets SET last_run_at=?, last_status=?, last_error=?, next_run_at=? WHERE id=?",
-            (db.now_iso(), "ok" if result.ok else "error", result.error,
+            "UPDATE datasets SET last_run_at=?, last_status=?, last_error=?, last_output=?, next_run_at=? WHERE id=?",
+            (db.now_iso(), "ok" if result.ok else "error", result.error, result.raw,
              _next_run(ds["interval_s"]), dataset_id),
         )
         node_status = recompute_node_status(conn, ds["node_id"])

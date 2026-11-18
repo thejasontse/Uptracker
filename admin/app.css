@@ -167,6 +167,9 @@ button:disabled { opacity: .5; cursor: default; }
 .card { border: 1px solid var(--ng-node-border); border-radius: 6px; padding: 7px 9px; margin: 7px 0; }
 .card .head { display: flex; align-items: center; gap: 6px; }
 .card .head .t { font-weight: 600; flex: 1; }
+.readings { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 5px 0 2px; font-size: 11px; }
+.readings .reading { white-space: nowrap; }
+.readings .reading b { font-weight: 700; }
 .pill { font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 9px; color: #fff; }
 .kv { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; margin: 2px 0; }
 .kv .k { color: var(--ng-muted); }

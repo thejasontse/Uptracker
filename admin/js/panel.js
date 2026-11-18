@@ -4,7 +4,7 @@
 // on demand (Refresh button) or after a mutation, so in-progress edits are safe.
 import { api } from './api.js';
 import { state } from './state.js';
-import { esc, breadcrumb, networkResourceLabel, NETWORK_PATH_HINTS, toast } from './util.js';
+import { esc, breadcrumb, networkResourceLabel, NETWORK_PATH_HINTS, toast, formatTimestamp } from './util.js';
 import { renderDatasetEditor } from './editor.js';
 import { renderMetricsView } from './metrics.js';
 import { renderRulesView } from './rules.js';
@@ -125,18 +125,32 @@ function nodeHtml(n) {
 }
 
 function datasetCard(d) {
+  // Latest reading per metric: value text (txt, or num+unit) coloured by the
+  // metric's current status. Metrics with no collected value yet are skipped.
+  const readings = (d.metrics || [])
+    .filter((m) => m.value)
+    .map((m) => {
+      const v = m.value;
+      const num = v.num != null ? `${v.num}${v.unit ? esc(m.unit) : ''}` : '';
+      const shown = v.txt != null && v.txt !== '' ? v.txt : num;
+      if (shown === '' || shown == null) return '';
+      return `<span class="reading" style="color:${esc(v.status_color || '#888')}" title="${esc(m.name)}: ${esc(shown)}">${esc(m.name)} <b>${esc(shown)}</b></span>`;
+    })
+    .filter(Boolean)
+    .join('');
+  const ts = formatTimestamp(d.last_run_at);
   return `
   <div class="card">
     <div class="head">
       <span class="t">${esc(d.name)}</span>
-      <span class="muted">${esc(d.method)}·${Math.round(d.interval_s / 60)}m</span>
       <button class="small" data-act="run" data-ds="${d.id}">Run</button>
       <button class="small" data-act="metrics" data-ds="${d.id}">Metrics</button>
       <button class="small" data-act="edit" data-ds="${d.id}">Edit</button>
       <button class="small danger" data-act="delDs" data-ds="${d.id}">×</button>
     </div>
+    ${readings ? `<div class="readings">${readings}</div>` : ''}
     ${d.last_error ? `<div class="err">last run: ${esc(d.last_error)}</div>` : ''}
-    ${d.last_run_at ? `<div class="kv"><span class="k">last run</span><span>${esc(d.last_run_at)}</span></div>` : ''}
+    ${ts ? `<div class="kv"><span class="k">last run</span><span>${esc(ts)}</span></div>` : ''}
     ${d.credential ? `<div class="kv"><span class="k">credential</span><span>🔒 ${esc(d.credential.name)}</span></div>` : ''}
   </div>`;
 }

@@ -31,6 +31,8 @@
 }
 
 * { box-sizing: border-box; }
+/* The dashboard canvas has no background grid (admin keeps it for alignment). */
+.ng-grid-line { display: none; }
 html, body {
   margin: 0; height: 100%;
   font: 12px system-ui, sans-serif;
@@ -111,6 +113,10 @@ button:disabled { opacity: .5; cursor: default; }
 .kv .k { color: var(--ng-muted); }
 .err { color: var(--ng-danger); font-size: 11px; }
 .ok { color: #3f9b3f; font-size: 11px; }
+/* Latest metric readings strip in a dataset card (admin panel.js). */
+.readings { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 5px 0 2px; font-size: 11px; }
+.readings .reading { white-space: nowrap; }
+.readings .reading b { font-weight: 700; }
 .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; vertical-align: -1px; }
 pre.out {
   background: #0e1116; color: #cdd6e4; padding: 8px; border-radius: 4px;

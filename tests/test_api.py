@@ -20,6 +20,15 @@ def _mk_nodes(client, pairs):
     assert r.status_code == 200
 
 
+def _get_ds(client, dataset_id):
+    """Read a single dataset dict back from the snapshot (no GET-by-id route)."""
+    for node in client.get("/api/snapshot").json()["nodes"]:
+        for ds in node["datasets"]:
+            if ds["id"] == dataset_id:
+                return ds
+    raise AssertionError(f"dataset {dataset_id} not in snapshot")
+
+
 def test_snapshot_shape(client):
     s = client.get("/api/snapshot").json()
     assert "graph" in s and "nodes" in s and "status_levels" in s
@@ -608,3 +617,69 @@ def test_saved_query_validated_on_save(client):
     # Empty name refused.
     assert client.post("/api/saved-queries",
                        json={"name": "  ", "sql": "SELECT id FROM nodes_wide"}).status_code == 400
+
+
+def test_last_output_persisted_for_regex_building(client) -> None:
+    """The full stdout of the latest run is stored on the dataset so the admin
+    metrics page can show raw output for building regexes."""
+    node_id = _mk_node(client, "out-node")
+    ds = client.post(
+        f"/api/nodes/{node_id}/datasets",
+        json={"name": "df", "method": "bash", "script": "echo hello-out; echo 42"},
+    ).json()
+
+    assert _get_ds(client, ds["id"]).get("last_output") is None
+
+    run = client.post(f"/api/datasets/{ds['id']}/run").json()
+    assert run["ok"] is True
+
+    got = _get_ds(client, ds["id"])
+    assert "hello-out" in (got.get("last_output") or "")
+    assert "42" in (got.get("last_output") or "")
+
+
+def test_param_values_round_trip(client) -> None:
+    _mk_node(client)
+    ds = client.post("/api/nodes/n1/datasets", json={
+        "name": "p", "method": "bash", "script": "echo hi",
+        "param_values": {"Threshold": "50"}}).json()
+    # Emitted back on read.
+    assert _get_ds(client, ds["id"])["param_values"] == {"Threshold": "50"}
+    # Patch omitting param_values preserves them; explicit {} clears.
+    client.patch(f"/api/datasets/{ds['id']}", json={
+        "name": "p2", "method": "bash", "script": "echo hi"})
+    assert _get_ds(client, ds["id"])["param_values"] == {"Threshold": "50"}
+    client.patch(f"/api/datasets/{ds['id']}", json={
+        "name": "p3", "method": "bash", "script": "echo hi", "param_values": {}})
+    assert _get_ds(client, ds["id"])["param_values"] == {}
+
+
+def test_collect_resolves_param_tokens(client):
+    _mk_node(client)
+    # Script and rule value carry [Param] tokens; they are stored raw but
+    # resolved at execution time from param_values.
+    ds = client.post("/api/nodes/n1/datasets", json={
+        "name": "tok", "method": "bash", "script": "echo rtt=[VAL]",
+        "param_values": {"VAL": "42", "LIMIT": "10"}}).json()
+    # Stored raw, not baked.
+    assert _get_ds(client, ds["id"])["script"] == "echo rtt=[VAL]"
+    m = client.post(f"/api/datasets/{ds['id']}/metrics", json={
+        "name": "rtt", "regex": r"rtt=(\d+)", "cast": "float"}).json()
+    critical = next(l for l in client.get("/api/status-levels").json()["status_levels"] if l["name"] == "critical")
+    # Rule value uses a token too: 42 > [LIMIT]=10 -> critical.
+    client.post(f"/api/metrics/{m['id']}/rules", json={
+        "op": "gt", "value": "[LIMIT]", "status_level_id": critical["id"]})
+    res = client.post(f"/api/datasets/{ds['id']}/run").json()
+    assert res["ok"] and res["metrics"][0]["num"] == 42
+    assert res["metrics"][0]["status"] == "critical"
+
+
+def test_collect_resolves_node_param_tokens(client):
+    # A [Label] token resolves from the node's own fields (known_params).
+    _mk_node(client, node_id="n1", label="web-7")
+    ds = client.post("/api/nodes/n1/datasets", json={
+        "name": "host", "method": "bash", "script": "echo host=[Label]"}).json()
+    m = client.post(f"/api/datasets/{ds['id']}/metrics", json={
+        "name": "host", "regex": r"host=(\S+)", "cast": "text"}).json()
+    res = client.post(f"/api/datasets/{ds['id']}/run").json()
+    assert res["metrics"][0]["txt"] == "web-7"

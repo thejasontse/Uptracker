@@ -156,7 +156,18 @@ def _dataset_dict(conn, ds: sqlite3.Row, levels: dict[int, dict]) -> dict:
         "enabled": bool(ds["enabled"]), "next_run_at": ds["next_run_at"], "last_run_at": ds["last_run_at"],
         "last_status": ds["last_status"], "last_error": ds["last_error"],
         "credential": creds, "metrics": metrics,
+        "param_values": _safe_json_obj(ds["param_values"] if "param_values" in ds.keys() else "{}"),
+        "last_output": ds["last_output"] if "last_output" in ds.keys() else None,
     }
+
+
+def _safe_json_obj(raw) -> dict:
+    """Parse a JSON object column, tolerating NULL/blank/corrupt values."""
+    try:
+        obj = json.loads(raw or "{}")
+    except (ValueError, TypeError):
+        return {}
+    return obj if isinstance(obj, dict) else {}
 
 
 def _alert_dict(conn, metric_id: int) -> dict | None:
@@ -302,6 +313,7 @@ class DatasetBody(BaseModel):
     enabled: bool = True
     credential_id: int | None = None
     secret: str | None = None          # re-entered secret (required on script change w/ credential)
+    param_values: dict[str, str] | None = None   # [Param] token -> value; script keeps tokens
 
 
 def _validate_method(method: str) -> None:
@@ -324,10 +336,11 @@ def create_dataset(node_id: str, body: DatasetBody) -> dict:
             conn.execute("UPDATE credentials SET secret_enc=?, updated_at=? WHERE id=?",
                          (secret_box().encrypt(body.secret), db.now_iso(), cred_id))
         cur = conn.execute(
-            """INSERT INTO datasets (node_id, name, method, script, timeout_s, interval_s, enabled, next_run_at, credential_id, created_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            """INSERT INTO datasets (node_id, name, method, script, timeout_s, interval_s, enabled, next_run_at, credential_id, param_values, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             (node_id, body.name, body.method, body.script, body.timeout_s, body.interval_s,
-             1 if body.enabled else 0, db.now_iso(), cred_id, db.now_iso(), db.now_iso()),
+             1 if body.enabled else 0, db.now_iso(), cred_id, json.dumps(body.param_values or {}),
+             db.now_iso(), db.now_iso()),
         )
         ds = conn.execute("SELECT * FROM datasets WHERE id=?", (cur.lastrowid,)).fetchone()
         return _dataset_dict(conn, ds, _levels_map(conn))
@@ -353,11 +366,17 @@ def patch_dataset(dataset_id: int, body: DatasetBody) -> dict:
                 raise HTTPException(400, "secret provided without a credential")
             conn.execute("UPDATE credentials SET secret_enc=?, updated_at=? WHERE id=?",
                          (secret_box().encrypt(body.secret), db.now_iso(), cred_id))
+        # Preserve the stored param_values when the caller omits them (None);
+        # an explicit {} clears them.
+        if body.param_values is not None:
+            param_values_json = json.dumps(body.param_values)
+        else:
+            param_values_json = old["param_values"] if "param_values" in old.keys() else "{}"
         conn.execute(
             """UPDATE datasets SET name=?, method=?, script=?, timeout_s=?, interval_s=?, enabled=?,
-                   credential_id=?, next_run_at=? WHERE id=?""",
+                   credential_id=?, param_values=?, next_run_at=? WHERE id=?""",
             (body.name, body.method, body.script, body.timeout_s, body.interval_s,
-             1 if body.enabled else 0, cred_id, db.now_iso(), dataset_id),
+             1 if body.enabled else 0, cred_id, param_values_json, db.now_iso(), dataset_id),
         )
         ds = conn.execute("SELECT * FROM datasets WHERE id=?", (dataset_id,)).fetchone()
         return _dataset_dict(conn, ds, _levels_map(conn))

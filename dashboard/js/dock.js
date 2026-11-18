@@ -1,25 +1,40 @@
-// Read-only docked panel: shows when each dataset on the selected node last ran.
-// Deliberately minimal — no dataset/metric editing, no metric value rows (a
-// dataset can drive many metrics, so a single "result" next to it is meaningless).
-// The only action is a per-dataset Run button, mirroring admin's panel.js.
+// Read-only docked panel: shows each dataset on the selected node with its
+// latest metric readings, last-run time and any error — mirroring the admin
+// panel's card layout. Deliberately minimal apart from that: no dataset/metric
+// editing controls. The only action is a per-dataset Run button (admin panel.js).
 import { api } from './api.js';
 import { state } from './state.js';
 import { getEffectiveSelectedNodeIds, onSelectionChanged } from './graph.js';
 import { refreshNow } from './poll.js';
+import { formatTimestamp } from './util.js';
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
   (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 function datasetCard(d) {
+  // Latest reading per metric: value text (txt, or num+unit) coloured by the
+  // metric's current status. Metrics with no collected value yet are skipped.
+  const readings = (d.metrics || [])
+    .filter((m) => m.value)
+    .map((m) => {
+      const v = m.value;
+      const num = v.num != null ? `${v.num}${v.unit ? esc(m.unit) : ''}` : '';
+      const shown = v.txt != null && v.txt !== '' ? v.txt : num;
+      if (shown === '' || shown == null) return '';
+      return `<span class="reading" style="color:${esc(v.status_color || '#888')}" title="${esc(m.name)}: ${esc(shown)}">${esc(m.name)} <b>${esc(shown)}</b></span>`;
+    })
+    .filter(Boolean)
+    .join('');
+  const ts = formatTimestamp(d.last_run_at);
   return `
   <div class="card">
     <div class="head">
       <span class="t">${esc(d.name)}</span>
-      <span class="muted">${esc(d.method)}\u00B7${Math.round((d.interval_s || 0) / 60)}m</span>
       <button class="small" data-act="run" data-ds="${d.id}" title="Run this dataset now">Run</button>
     </div>
-    ${d.last_run_at ? `<div class="kv"><span class="k">last run</span><span>${esc(d.last_run_at)}</span></div>` : '<div class="kv"><span class="k">last run</span><span class="muted">never</span></div>'}
-    ${d.last_error ? `<div class="err">last error: ${esc(d.last_error)}</div>` : ''}
+    ${readings ? `<div class="readings">${readings}</div>` : ''}
+    ${d.last_error ? `<div class="err">last run: ${esc(d.last_error)}</div>` : ''}
+    ${ts ? `<div class="kv"><span class="k">last run</span><span>${esc(ts)}</span></div>` : ''}
   </div>`;
 }
 

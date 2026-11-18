@@ -112,6 +112,8 @@ CREATE TABLE IF NOT EXISTS datasets (
     last_status    TEXT,                            -- 'ok'|'error'|'timeout'|...
     last_error     TEXT,
     credential_id  INTEGER REFERENCES credentials(id) ON DELETE SET NULL,
+    param_values   TEXT NOT NULL DEFAULT '{}',      -- JSON: [Param] token -> value (script keeps tokens)
+    last_output    TEXT,                            -- full stdout/stderr of the latest run (for regex building)
     created_at     TEXT NOT NULL,
     updated_at     TEXT NOT NULL
 );
@@ -215,6 +217,8 @@ def init_db() -> None:
         _seed_settings(conn)
         migrate_network_resources(conn)
         migrate_mustache_tokens(conn)
+        migrate_dataset_param_values(conn)
+        migrate_dataset_last_output(conn)
         row = conn.execute("SELECT json FROM graph_model WHERE id=1").fetchone()
         if row is None:
             conn.execute(
@@ -231,6 +235,27 @@ def _migrate_credentials_rekey(conn: sqlite3.Connection) -> None:
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(credentials)")}
     if "needs_rekey" not in cols:
         conn.execute("ALTER TABLE credentials ADD COLUMN needs_rekey INTEGER NOT NULL DEFAULT 0")
+
+
+def migrate_dataset_param_values(conn: sqlite3.Connection) -> None:
+    """Add ``datasets.param_values`` (JSON map of ``[Param]`` token -> value) to
+    databases created before the column existed. The dataset ``script`` now keeps
+    its ``[Param]`` tokens and they are resolved at execution time from this map,
+    so values persist across reloads instead of being baked into the script.
+    Idempotent — a no-op once the column exists."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(datasets)")}
+    if "param_values" not in cols:
+        conn.execute("ALTER TABLE datasets ADD COLUMN param_values TEXT NOT NULL DEFAULT '{}'")
+
+
+def migrate_dataset_last_output(conn: sqlite3.Connection) -> None:
+    """Add ``datasets.last_output`` (the full stdout/stderr of the most recent
+    collection run) to databases created before the column existed. The admin
+    metrics page shows this raw output so a regex can be built against it.
+    Idempotent — a no-op once the column exists."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(datasets)")}
+    if "last_output" not in cols:
+        conn.execute("ALTER TABLE datasets ADD COLUMN last_output TEXT")
 
 
 # Legacy node/template network-resource values remapped onto the current types.

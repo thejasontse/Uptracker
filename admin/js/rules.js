@@ -6,6 +6,7 @@
 import { api } from './api.js';
 import { state } from './state.js';
 import { breadcrumb, esc, toast, RULE_STATUSES } from './util.js';
+import { attachParamAutocomplete } from './params.js';
 
 const OPS = [
   ['gt', '>'], ['lt', '<'], ['gte', '≥'], ['lte', '≤'], ['eq', '='], ['ne', '≠'],
@@ -82,6 +83,8 @@ function renderRules() {
   list.querySelectorAll('[data-rulefield]').forEach((el) => {
     el.onchange = () => { draft.rules[Number(el.dataset.ri)][el.dataset.rulefield] = el.type === 'number' ? Number(el.value) : el.value; };
   });
+  // A rule's threshold can be a [Param] token, resolved at collection time.
+  list.querySelectorAll('[data-rulefield="value"]').forEach((el) => attachParamAutocomplete(el));
   list.querySelectorAll('[data-delrule]').forEach((el) => {
     el.onclick = () => { draft.rules.splice(Number(el.dataset.ri), 1); renderRules(); };
   });

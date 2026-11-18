@@ -28,11 +28,12 @@ const statusColors = new Map(); // nodeId -> color currently applied
 
 // Selection + view-menu state.
 let suppressDrag = false; // true while a node/group press is in flight (drag suppressed)
-let onSelectionChangedCb = null; // set via onSelectionChanged()
+const selectionSubscribers = []; // callbacks set via onSelectionChanged()
 let selectionRaf = null; // rAF debounce handle for the selection observer
 let viewMenuEl = null; // the open view-menu element (or null)
 let viewMenuDismiss = null; // cleanup fn for the view-menu's document listeners
 let lastEffectiveSelection = new Set(); // last effective selection (change detection)
+let lastSelectionKeyStr = ''; // stringified last reported selection (flush comparison)
 
 // Replace the library's editor glyphs on every node with a refresh button.
 // Idempotent: safe to call after any re-render (status repaints rebuild the
@@ -80,23 +81,82 @@ export function initGraph(container) {
   });
   decorateObserver.observe(container, { childList: true, subtree: true });
 
-  // Fire onSelectionChanged when the effective selection changes. Debounced
-  // with rAF so a marquee drag (which re-renders every pointermove) triggers at
-  // most one callback per frame. Status repaints rebuild the node DOM but keep
-  // the selection classes, so the effective set is unchanged → no callback.
-  const selectionObserver = new MutationObserver(() => {
-    if (selectionRaf) return;
-    selectionRaf = requestAnimationFrame(() => {
-      selectionRaf = null;
-      const now = getEffectiveSelectedNodeIds();
-      const prev = lastEffectiveSelection;
-      if (now.size !== prev.size || [...now].some((id) => !prev.has(id))) {
-        lastEffectiveSelection = now;
-        if (onSelectionChangedCb) onSelectionChangedCb();
+  // Fire onSelectionChanged when the effective selection changes. Two triggers:
+  //   1. A capture-phase pointerdown on the container (same trick as the admin
+  //      view). It runs BEFORE the library's own pointerdown handler, which
+  //      calls render() and detaches the pressed element — by the time any
+  //      later listener (or a MutationObserver) sees the new ng-selected
+  //      classes, the browser may already have painted the stale table. We
+  //      annotate the click with the selection it is about to produce (a node
+  //      adds that node id; a group adds all of its member ids, nested groups
+  //      included — plain and Shift+click both covered) and fire the callback
+  //      in a setTimeout(0), i.e. right after the library's handler finishes,
+  //      still within the same task boundary as the click.
+  //   2. A rAF-coalesced poll of the rendered selection as a catch-all for
+  //      everything else: marquee drags, Escape / background clears, undo/redo
+  //      and any programmatic change. One comparison per frame instead of one
+  //      MutationObserver callback per node per frame (the previous observer
+  //      fired hundreds of times per drag on wide graphs).
+  const emitSelectionChange = () => {
+    lastEffectiveSelection = getEffectiveSelectedNodeIds();
+    for (const cb of selectionSubscribers) cb();
+  };
+
+  // The selection the next flush should report, precomputed from the click
+  // annotation. null = nothing predicted; the flush compares against the
+  // live DOM instead.
+  let pendingKey = null;
+
+  const selectionKey = () => Array.from(getEffectiveSelectedNodeIds()).sort().join(',');
+
+  const flushSelectionChange = () => {
+    if (pendingKey !== null) {
+      const key = pendingKey;
+      pendingKey = null;
+      if (key !== lastSelectionKeyStr) {
+        lastSelectionKeyStr = key;
+        emitSelectionChange();
       }
-    });
-  });
-  selectionObserver.observe(container, { childList: true, subtree: true });
+      return;
+    }
+    const key = selectionKey();
+    if (key === lastSelectionKeyStr) return;
+    lastSelectionKeyStr = key;
+    emitSelectionChange();
+  };
+
+  // Capture-phase: runs before the library's pointerdown listener on the SVG.
+  container.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    const nodeEl = e.target.closest && e.target.closest('[data-node]');
+    if (nodeEl && !e.shiftKey) {
+      pendingKey = nodeEl.getAttribute('data-node');
+      setTimeout(flushSelectionChange, 0);
+      return;
+    }
+    const groupEl = e.target.closest && e.target.closest('[data-group]');
+    if (groupEl && !e.shiftKey) {
+      const gid = groupEl.getAttribute('data-group');
+      // Match getEffectiveSelectedNodeIds(): a group selection surfaces its
+      // direct geometric members.
+      pendingKey = Array.from(graph.groupMembers(gid)).sort().join(',');
+      setTimeout(flushSelectionChange, 0);
+      return;
+    }
+    // marquee / background / shift-click: can't predict cheaply — let the
+    // rAF poll notice the change on the next frame.
+  }, true);
+
+  // rAF catch-all poll: notices marquee / Escape / programmatic changes.
+  const pollSelection = () => {
+    selectionRaf = null;
+    flushSelectionChange();
+    scheduleSelectionPoll();
+  };
+  const scheduleSelectionPoll = () => {
+    if (!selectionRaf) selectionRaf = requestAnimationFrame(pollSelection);
+  };
+  scheduleSelectionPoll();
 
   // Block editing. Capture-phase handlers on the container run before the
   // library's own listeners on the SVG it renders inside.
@@ -129,8 +189,13 @@ export function initGraph(container) {
     suppressDrag = false; // reset at the start of every gesture
     if (isRefresh(e)) { e.stopPropagation(); return; } // don't drag/select, but keep default so click fires
     // Editing elements: block so the library never starts a connect / resize /
-    // reorder / segment / label drag.
-    if (e.target.closest('[data-port], [data-resize], [data-resize-group], [data-edgelabel], [data-seg], [data-gport], [data-paramrow]')) {
+    // reorder / segment / label drag. Param rows are NOT blocked: blocking them
+    // made presses on the (large) row area fail to select the node at all.
+    // Instead the press falls into the node-body branch below — suppressDrag
+    // kills the library's pointermove before its 3px threshold can promote a
+    // maybe-paramrow gesture into a real reorder, and the library's pointerup
+    // then selects the node (Shift toggles).
+    if (e.target.closest('[data-port], [data-resize], [data-resize-group], [data-edgelabel], [data-seg], [data-gport]')) {
       block(e);
       return;
     }
@@ -156,6 +221,8 @@ export function initGraph(container) {
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Delete' || e.key === 'Backspace') block(e);
     if ((e.ctrlKey || e.metaKey) && ['z', 'y', 'Z', 'Y', 'a', 'A'].includes(e.key)) block(e);
+    // Copy / paste are editing gestures too — the dashboard is read-only.
+    if ((e.ctrlKey || e.metaKey) && ['c', 'v', 'C', 'V', 'x', 'X'].includes(e.key)) block(e);
   }, true);
 
   return graph;
@@ -184,7 +251,13 @@ export function getEffectiveSelectedNodeIds() {
   if (groups.size && graph) for (const gid of groups) for (const id of graph.groupMembers(gid)) ids.add(id);
   return ids;
 }
-export function onSelectionChanged(cb) { onSelectionChangedCb = cb; }
+// Register a callback fired whenever the effective selection changes. Multiple
+// modules subscribe (app.js renders the table, dock.js renders the panel) —
+// this is a list, not a single slot; last-writer-wins here once silently
+// dropped the table's subscriber and the grid only updated on the 15s poll.
+export function onSelectionChanged(cb) {
+  if (!selectionSubscribers.includes(cb)) selectionSubscribers.push(cb);
+}
 
 // --- selection-aware PDF export ---
 export function exportPdf() {
