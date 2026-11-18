@@ -4,7 +4,7 @@
 // can maximize to fill the screen — states persist in localStorage.
 import { api } from './api.js';
 import { state } from './state.js';
-import { initGraph, loadGraph, paintStatus, onRefreshNode, getEffectiveSelectedNodeIds, onSelectionChanged } from './graph.js';
+import { initGraph, loadGraph, paintStatuses, onRefreshNode, getEffectiveSelectedNodeIds, onSelectionChanged } from './graph.js';
 import { startPolling, refreshNow } from './poll.js';
 import { initDock } from './dock.js';
 import { toast } from './util.js';
@@ -350,17 +350,18 @@ async function boot() {
   initTableSort();
   initDock();
   initCollapse();
-  startPolling();
+  // boot() already loaded a snapshot, so skip the immediate first poll tick.
+  startPolling(undefined, { skipFirst: true });
   initViews();
 
   // Repaint node status colors + table whenever a snapshot arrives. An active view
   // re-runs its SQL (live rows); otherwise the default grid repaints from state.
   state.subscribe(() => {
-    for (const n of state.snapshot.nodes) paintStatus(n.id, n.status.color);
+    paintStatuses(state.snapshot.nodes.map((n) => [n.id, n.status.color]));
     if (activeViewSql) { refreshActiveView(); return; }
     renderTable();
   });
-  for (const n of snap.nodes) paintStatus(n.id, n.status.color);
+  paintStatuses(snap.nodes.map((n) => [n.id, n.status.color]));
   renderTable();
 }
 

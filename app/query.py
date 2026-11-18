@@ -135,28 +135,52 @@ def _build_wide(conn: sqlite3.Connection) -> list[str]:
         LEFT JOIN status_levels sl ON sl.id = n.status_level_id
         """
     )
-    # Latest collected value per metric (numeric when available, else text).
+    if not metrics:
+        return cols
+
+    # Latest collected value per (node, metric-name) in a SINGLE scan of
+    # metric_values, materialised into a small indexed temp table. The previous
+    # implementation ran one UPDATE per metric, each re-scanning metric_values
+    # joined to metrics/datasets with ``LOWER(m.name)=?`` — O(metrics x values),
+    # which is the dominant cost of opening the query bar on large graphs. Here
+    # we pay for one pass and then fill each column with a cheap indexed lookup.
+    conn.execute("DROP TABLE IF EXISTS temp._latest")
+    conn.execute(
+        """
+        CREATE TEMP TABLE _latest AS
+        SELECT node_id, lname, value
+        FROM (
+            SELECT d.node_id AS node_id,
+                   LOWER(m.name) AS lname,
+                   CASE WHEN mv.num IS NOT NULL THEN CAST(mv.num AS TEXT)
+                        ELSE COALESCE(mv.txt, 'N/A') END AS value,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY d.node_id, LOWER(m.name)
+                       ORDER BY mv.collected_at DESC, mv.metric_id DESC
+                   ) AS rn
+            FROM metric_values mv
+            JOIN metrics m ON m.id = mv.metric_id
+            JOIN datasets d ON d.id = mv.dataset_id
+        )
+        WHERE rn = 1
+        """
+    )
+    conn.execute("CREATE INDEX temp._latest_idx ON _latest(node_id, lname)")
     for lower, disp in metrics:
         conn.execute(
             f"""
             UPDATE nodes_wide SET {_q(disp)} = (
-                SELECT CASE WHEN mv.num IS NOT NULL THEN mv.num
-                            ELSE COALESCE(mv.txt, 'N/A') END
-                FROM metric_values mv
-                JOIN metrics m ON m.id = mv.metric_id
-                JOIN datasets d ON d.id = mv.dataset_id
-                WHERE d.node_id = nodes_wide.id AND LOWER(m.name) = ?
-                ORDER BY mv.collected_at DESC LIMIT 1
+                SELECT value FROM _latest
+                WHERE _latest.node_id = nodes_wide.id AND _latest.lname = ?
             )
             WHERE EXISTS (
-                SELECT 1 FROM metric_values mv
-                JOIN metrics m ON m.id = mv.metric_id
-                JOIN datasets d ON d.id = mv.dataset_id
-                WHERE d.node_id = nodes_wide.id AND LOWER(m.name) = ?
+                SELECT 1 FROM _latest
+                WHERE _latest.node_id = nodes_wide.id AND _latest.lname = ?
             )
             """,
             (lower, lower),
         )
+    conn.execute("DROP TABLE IF EXISTS temp._latest")
     return cols
 
 

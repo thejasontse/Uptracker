@@ -203,6 +203,11 @@ CREATE INDEX IF NOT EXISTS idx_datasets_next      ON datasets(next_run_at);
 CREATE INDEX IF NOT EXISTS idx_metrics_dataset    ON metrics(dataset_id);
 CREATE INDEX IF NOT EXISTS idx_rules_metric       ON rules(metric_id);
 CREATE INDEX IF NOT EXISTS idx_values_dataset     ON metric_values(dataset_id);
+-- The query pivot (app/query.py ``_build_wide``) resolves metrics by case-insensitive
+-- name; without this expression index every column lookup scans the whole metrics
+-- table. (Values/alerts need no extra index: ``metric_values.metric_id`` is the PK
+-- and ``alert_configs.metric_id`` is UNIQUE, both already indexed.)
+CREATE INDEX IF NOT EXISTS idx_metrics_name       ON metrics(name COLLATE NOCASE);
 """
 
 

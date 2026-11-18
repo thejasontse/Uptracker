@@ -1,7 +1,7 @@
 // App entry: wire the graph canvas, the right dock, and status repaints.
 import { api } from './api.js';
 import { state } from './state.js';
-import { initGraph, loadGraph, paintStatus, setOnFlushed, flushNow } from './graph.js';
+import { initGraph, loadGraph, paintStatuses, setOnFlushed, flushNow } from './graph.js';
 import { initPanel } from './panel.js';
 import { attachQueryAutocomplete } from './query.js';
 import { toast, esc, RULE_STATUSES } from './util.js';
@@ -327,9 +327,10 @@ function initCollapse() {
 }
 
 async function boot() {
-  const snap = await api.snapshot();
+  // Fetch the snapshot and network resources concurrently — they are independent.
+  const [snap, netRes] = await Promise.all([api.snapshot(), api.networkResources()]);
   state.setSnapshot(snap);
-  state.snapshot._network_resources = (await api.networkResources()).network_resources;
+  state.snapshot._network_resources = netRes.network_resources;
 
   // Apply the global theme default on load (pre-set the container class before
   // initGraph so the page never flashes the wrong theme; the graph.js observer
@@ -342,9 +343,17 @@ async function boot() {
   loadGraph(snap.graph);
 
   // After a layout save the DB node rows may have changed (added/pruned) —
-  // refresh state so the table and panel stay current.
+  // refresh state so the table and panel stay current. A pure drag/reorder
+  // keeps the same node ids, so skip the (expensive) snapshot refetch then and
+  // just repaint the table; only re-fetch when the set of nodes actually changed.
+  let lastNodeIds = snap.nodes.map((n) => n.id).sort().join(',');
   setOnFlushed(async () => {
-    state.setSnapshot(await api.snapshot());
+    const ids = [...document.querySelectorAll('#canvas [data-node]')]
+      .map((el) => el.getAttribute('data-node')).sort().join(',');
+    if (ids && ids !== lastNodeIds) {
+      lastNodeIds = ids;
+      state.setSnapshot(await api.snapshot());
+    }
     renderTable();
   });
 
@@ -361,10 +370,10 @@ async function boot() {
   // re-filter the table (the metric columns depend on which nodes are shown).
   state.subscribe((s, why) => {
     if (why === 'select') { renderTable(); return; }
-    for (const n of s.nodes) paintStatus(n.id, n.status.color);
+    paintStatuses(s.nodes.map((n) => [n.id, n.status.color]));
     renderTable();
   });
-  for (const n of snap.nodes) paintStatus(n.id, n.status.color);
+  paintStatuses(snap.nodes.map((n) => [n.id, n.status.color]));
   renderTable();
 
   document.getElementById('dockBody').dataset.ready = '1';

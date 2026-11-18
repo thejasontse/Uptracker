@@ -184,22 +184,129 @@ def _alert_dict(conn, metric_id: int) -> dict | None:
 # ---------------------------------------------------------------------------
 # Snapshot
 # ---------------------------------------------------------------------------
+def _in_clause(items, placeholder="?"):
+    """Build an `IN (?,?,...)` fragment for a non-empty sequence."""
+    return "(" + ",".join([placeholder] * len(items)) + ")"
+
+
+# SQLite caps the number of bound parameters per statement (999 on older
+# builds, 32766 on newer). Chunk large id lists so the batched snapshot stays
+# safe on any deployment regardless of graph size.
+_CHUNK = 500
+
+
+def _iter_chunks(items, size=_CHUNK):
+    items = list(items)
+    for i in range(0, len(items), size):
+        yield items[i:i + size]
+
+
+def _batched_snapshot(conn, levels: dict[int, dict]) -> list[dict]:
+    """Assemble the per-node snapshot tree with a fixed number of queries.
+
+    The naive path (snapshot() calling _dataset_dict per dataset, which itself
+    loops metrics and issues a value/rules/alert query each) is O(N_nodes x
+    N_datasets x N_metrics) round-trips — the dominant server cost at 50+ nodes.
+    This loads every related row in one query per table and joins them in
+    Python, so the whole snapshot is a constant ~7 queries regardless of graph
+    size. Output is byte-for-byte identical to the looped version; _dataset_dict
+    stays untouched for the single-resource endpoints that still use it.
+    """
+    nodes_rows = conn.execute("SELECT * FROM nodes ORDER BY label").fetchall()
+    if not nodes_rows:
+        return []
+
+    # Datasets for all nodes at once, grouped by node.
+    ds_by_node: dict[str, list[sqlite3.Row]] = {}
+    ds_rows = conn.execute("SELECT * FROM datasets ORDER BY id").fetchall()
+    ds_ids = []
+    for d in ds_rows:
+        ds_by_node.setdefault(d["node_id"], []).append(d)
+        ds_ids.append(d["id"])
+
+    # Metrics for all datasets, grouped by dataset.
+    met_by_ds: dict[int, list[sqlite3.Row]] = {}
+    met_ids = []
+    for chunk in _iter_chunks(ds_ids):
+        for m in conn.execute(f"SELECT * FROM metrics WHERE dataset_id IN {_in_clause(chunk)} ORDER BY id", chunk).fetchall():
+            met_by_ds.setdefault(m["dataset_id"], []).append(m)
+            met_ids.append(m["id"])
+
+    # Latest values, rules and alert configs keyed by metric id.
+    val_by_met: dict[int, sqlite3.Row] = {}
+    rules_by_met: dict[int, list[sqlite3.Row]] = {}
+    alert_by_met: dict[int, sqlite3.Row] = {}
+    for chunk in _iter_chunks(met_ids):
+        ph = _in_clause(chunk)
+        for v in conn.execute(f"SELECT * FROM metric_values WHERE metric_id IN {ph}", chunk).fetchall():
+            val_by_met[v["metric_id"]] = v
+        for r in conn.execute(
+            f"SELECT * FROM rules WHERE metric_id IN {ph} ORDER BY priority DESC, id", chunk
+        ).fetchall():
+            rules_by_met.setdefault(r["metric_id"], []).append(r)
+        for a in conn.execute(f"SELECT * FROM alert_configs WHERE metric_id IN {ph}", chunk).fetchall():
+            alert_by_met[a["metric_id"]] = a
+
+    # Credentials referenced by any dataset, keyed by id.
+    cred_ids = sorted({d["credential_id"] for d in ds_rows if d["credential_id"]})
+    cred_by_id: dict[int, sqlite3.Row] = {}
+    for chunk in _iter_chunks(cred_ids):
+        for c in conn.execute(
+            f"SELECT id, name, username FROM credentials WHERE id IN {_in_clause(chunk)}", chunk
+        ).fetchall():
+            cred_by_id[c["id"]] = c
+
+    def build_metric(m: sqlite3.Row) -> dict:
+        val = val_by_met.get(m["id"])
+        a = alert_by_met.get(m["id"])
+        return {
+            "id": m["id"], "name": m["name"], "regex": m["regex"], "group_index": m["group_index"],
+            "cast": m["cast"], "unit": m["unit"],
+            "rules": [
+                {"id": r["id"], "op": r["op"], "value": r["value"],
+                 "status_level_id": r["status_level_id"], "priority": r["priority"]}
+                for r in rules_by_met.get(m["id"], [])
+            ],
+            "alert": None if a is None else {
+                "id": a["id"], "enabled": bool(a["enabled"]), "recipients": a["recipients"],
+                "subject": a["subject"], "body": a["body"], "cooldown_s": a["cooldown_s"],
+                "only_on_change": bool(a["only_on_change"]), "last_status": a["last_status"],
+                "last_sent_at": a["last_sent_at"],
+            },
+            "value": None if val is None else _value_dict(val, levels),
+        }
+
+    def build_dataset(d: sqlite3.Row) -> dict:
+        c = cred_by_id.get(d["credential_id"]) if d["credential_id"] else None
+        return {
+            "id": d["id"], "node_id": d["node_id"], "name": d["name"], "method": d["method"],
+            "script": d["script"], "timeout_s": d["timeout_s"], "interval_s": d["interval_s"],
+            "enabled": bool(d["enabled"]), "next_run_at": d["next_run_at"], "last_run_at": d["last_run_at"],
+            "last_status": d["last_status"], "last_error": d["last_error"],
+            "credential": None if c is None else {"id": c["id"], "name": c["name"], "username": c["username"]},
+            "metrics": [build_metric(m) for m in met_by_ds.get(d["id"], [])],
+            "param_values": _safe_json_obj(d["param_values"] if "param_values" in d.keys() else "{}"),
+            "last_output": d["last_output"] if "last_output" in d.keys() else None,
+        }
+
+    out = []
+    for n in nodes_rows:
+        out.append({
+            "id": n["id"], "label": n["label"], "network_resource": n["network_resource"],
+            "network_path": n["network_path"], "tracking": bool(n["tracking"]),
+            "status": _status_of(conn, n["status_level_id"], levels),
+            "status_updated_at": n["status_updated_at"],
+            "datasets": [build_dataset(d) for d in ds_by_node.get(n["id"], [])],
+        })
+    return out
+
+
 @app.get("/api/snapshot")
 def snapshot() -> dict:
     with _conn() as conn:
         levels = _levels_map(conn)
         graph = db.get_graph_json(conn)
-        nodes = []
-        for n in conn.execute("SELECT * FROM nodes ORDER BY label").fetchall():
-            ds = [_dataset_dict(conn, d, levels)
-                  for d in conn.execute("SELECT * FROM datasets WHERE node_id=? ORDER BY id", (n["id"],)).fetchall()]
-            nodes.append({
-                "id": n["id"], "label": n["label"], "network_resource": n["network_resource"], "network_path": n["network_path"],
-                "tracking": bool(n["tracking"]),
-                "status": _status_of(conn, n["status_level_id"], levels),
-                "status_updated_at": n["status_updated_at"],
-                "datasets": ds,
-            })
+        nodes = _batched_snapshot(conn, levels)
         return {
             "graph": graph,
             "status_levels": [dict(r) for r in conn.execute("SELECT * FROM status_levels ORDER BY rank").fetchall()],

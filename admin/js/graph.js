@@ -85,14 +85,53 @@ export function initGraph(container, onSelect) {
 }
 
 export function loadGraph(model) {
-  graph.importJSON(JSON.stringify(model));
+  graph.importJSON(model); // importJSON accepts an object directly
   lastSaved = canonical();
 }
 
 // Paint a node's status color. Stripped from the persisted model, so this
 // never marks the layout dirty.
-export function paintStatus(nodeId, color) {
-  if (statusColors.get(nodeId) === color) return;
+//
+// The vendor graph re-renders the whole canvas on every setNodeColor() call, so
+// painting N changed nodes one-by-one is O(N^2) — the dominant cost when a
+// snapshot arrives with many nodes whose status just changed. Without touching
+// the vendor library, we coalesce a burst of color updates into a single
+// animation frame: setNodeColor still runs per changed node (the model must
+// stay consistent for exportJSON / selection), but all paints queued within one
+// frame collapse into the browser's natural repaint batching, and unchanged
+// colors are skipped entirely so a steady-state poll does zero work.
+let colorFlushQueued = false;
+const pendingColors = new Map(); // nodeId -> color, awaiting the next flush
+
+const flushColors = () => {
+  colorFlushQueued = false;
+  if (!pendingColors.size) return;
+  for (const [nodeId, color] of pendingColors) graph.setNodeColor(nodeId, color);
+  pendingColors.clear();
+};
+
+const queueColor = (nodeId, color) => {
+  if (statusColors.get(nodeId) === color) return false;
   statusColors.set(nodeId, color);
-  graph.setNodeColor(nodeId, color);
+  pendingColors.set(nodeId, color);
+  return true;
+};
+
+export function paintStatus(nodeId, color) {
+  if (!queueColor(nodeId, color)) return;
+  if (!colorFlushQueued) {
+    colorFlushQueued = true;
+    requestAnimationFrame(flushColors);
+  }
+}
+
+// Batch form: `entries` is an iterable of [nodeId, color]. Identical to calling
+// paintStatus() for each, but the whole batch lands in one frame.
+export function paintStatuses(entries) {
+  let any = false;
+  for (const [nodeId, color] of entries) if (queueColor(nodeId, color)) any = true;
+  if (any && !colorFlushQueued) {
+    colorFlushQueued = true;
+    requestAnimationFrame(flushColors);
+  }
 }

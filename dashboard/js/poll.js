@@ -5,19 +5,29 @@ import { state } from './state.js';
 
 let timer = null;
 
-export function startPolling(onError) {
+// Start polling. `options.skipFirst` avoids an immediate fetch when the caller
+// (boot) already loaded a snapshot — it schedules the first tick one interval
+// out instead, using the interval from the snapshot already in state.
+export function startPolling(onError, { skipFirst = false } = {}) {
+  const schedule = (intervalS) => {
+    if (timer) clearInterval(timer);
+    timer = setInterval(tick, Math.max(3, intervalS || 15) * 1000);
+  };
   const tick = async () => {
     try {
       const snap = await api.snapshot();
       state.setSnapshot(snap);
       // Reschedule with the server-provided interval.
-      if (timer) clearInterval(timer);
-      timer = setInterval(tick, Math.max(3, snap.poll_interval_s || 15) * 1000);
+      schedule(snap.poll_interval_s);
     } catch (e) {
       if (onError) onError(e);
     }
   };
-  tick();
+  if (skipFirst) {
+    schedule(state.snapshot?.poll_interval_s);
+  } else {
+    tick();
+  }
 }
 
 export async function refreshNow() {
