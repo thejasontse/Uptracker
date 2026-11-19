@@ -556,6 +556,11 @@ def test_run(body: TestRunBody) -> dict:
             node = conn.execute("SELECT * FROM nodes WHERE id=?", (body.node_id,)).fetchone()
         if node is not None:
             pvals.update(tpl.known_params(node))
+    # Body values override node-derived ones (lower-cased for lookup), except a
+    # self-referential entry ({"label": "[label]"}) which is dropped so it
+    # cannot shadow the live node value with the literal token. Node-derived
+    # keys are no longer persisted by the admin, so a saved override here is an
+    # intentional custom value.
     for k, v in tpl.strip_self_referential(body.param_values or {}).items():
         pvals[str(k).lower()] = "" if v is None else str(v)
 

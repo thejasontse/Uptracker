@@ -226,6 +226,7 @@ def init_db() -> None:
         migrate_network_resources(conn)
         migrate_mustache_tokens(conn)
         migrate_dataset_param_values(conn)
+        migrate_strip_known_params(conn)
         migrate_dataset_last_output(conn)
         migrate_alert_trigger_count(conn)
         row = conn.execute("SELECT json FROM graph_model WHERE id=1").fetchone()
@@ -255,6 +256,40 @@ def migrate_dataset_param_values(conn: sqlite3.Connection) -> None:
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(datasets)")}
     if "param_values" not in cols:
         conn.execute("ALTER TABLE datasets ADD COLUMN param_values TEXT NOT NULL DEFAULT '{}'")
+
+
+# Node-derived [Param] names — mirrored from app.templates.KNOWN_PARAM_KEYS.
+# Duplicated here (rather than imported) because templates.py imports this
+# module, so importing back would be circular.
+_KNOWN_PARAM_KEYS = {"label", "id", "network-path reference", "network resource"}
+
+
+def migrate_strip_known_params(conn: sqlite3.Connection) -> None:
+    """Remove node-derived keys from stored dataset ``param_values``.
+
+    Older versions of the admin persisted every parameter field — including the
+    node-derived ones (``[label]``, ``[id]``, ``[Network-Path Reference]``, …) —
+    into a dataset's ``param_values`` blob. Those saved copies shadowed the live
+    node fields at execution time, so a renamed node or changed network path
+    kept using the stale value baked in at save time (e.g. ``ping [label]``
+    resolving to an old name). Node-derived params always resolve from the node
+    itself now, so any such key is dropped from existing rows. Custom tokens are
+    preserved untouched. Idempotent: rows with nothing to strip are skipped."""
+    try:
+        rows = conn.execute("SELECT id, param_values FROM datasets").fetchall()
+    except sqlite3.OperationalError:
+        return  # datasets table absent (fresh db before schema) — nothing to do
+    for r in rows:
+        try:
+            vals = json.loads(r["param_values"] or "{}")
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(vals, dict):
+            continue
+        kept = {k: v for k, v in vals.items() if str(k).strip().lower() not in _KNOWN_PARAM_KEYS}
+        if len(kept) != len(vals):
+            conn.execute("UPDATE datasets SET param_values=? WHERE id=?",
+                         [json.dumps(kept), r["id"]])
 
 
 def migrate_dataset_last_output(conn: sqlite3.Connection) -> None:

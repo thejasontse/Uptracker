@@ -61,6 +61,23 @@ export function paramValueMap(node, paramValues) {
   return values;
 }
 
+// The user-entered values to PERSIST, keyed by display name, limited to the
+// tokens in *names*. Node-derived params ([label], [id], [Network-Path
+// Reference], [Network Resource]) are skipped: they always resolve live from the
+// node at execution time, so saving a snapshot would shadow the current node
+// value once the node is renamed or its network path changes (e.g. a stale
+// "label" making `ping [label]` target an old name). Only genuine custom tokens
+// ([Host], [Threshold], …) are stored. Blank values are dropped.
+export function customParamValues(names, paramValues) {
+  const out = {};
+  for (const name of names || []) {
+    if (KNOWN_PARAM_KEYS.has(String(name).toLowerCase())) continue;
+    const v = paramValues[name];
+    if (v !== undefined && String(v).trim()) out[name] = v;
+  }
+  return out;
+}
+
 export function substituteParams(text, values) {
   if (typeof text !== 'string' || !text) return text;
   return text.replace(new RegExp(PARAM_RE_SRC, 'g'), (whole, name) => {

@@ -6,7 +6,7 @@ import { api } from './api.js';
 import { state } from './state.js';
 import { breadcrumb, esc, toast } from './util.js';
 import {
-  scanParams, paramValueMap, substituteParams, missingParams,
+  scanParams, paramValueMap, substituteParams, missingParams, customParamValues,
   paintParamFields, attachParamAutocomplete,
 } from './params.js';
 
@@ -105,15 +105,18 @@ export function renderMetricsView(body, node, ds, navCtx) {
     try {
       await save();
       // Persist the [Param] values alongside the metrics so they survive a
-      // reload and are used by scheduled collection. Send the full dataset
-      // fields (patch replaces them) with param_values added.
+      // reload and are used by scheduled collection. Only custom tokens are
+      // stored — node-derived params ([label], etc.) resolve live from the node
+      // at execution time, so saving them would shadow the current node value.
+      // Send the full dataset fields (patch replaces them) with param_values added.
+      const persistParams = customParamValues(draftParamNames(), paramValues);
       await api.patchDataset(dataset.id, {
         name: dataset.name, method: dataset.method, script: dataset.script,
         timeout_s: dataset.timeout_s, interval_s: dataset.interval_s,
         enabled: dataset.enabled, credential_id: dataset.credential ? dataset.credential.id : null,
-        param_values: paramValues,
+        param_values: persistParams,
       });
-      dataset.param_values = { ...paramValues };
+      dataset.param_values = { ...persistParams };
       await ctx.onSaved(); toast('Saved.');
     }
     catch (e) { toast(e.message, 'error'); }

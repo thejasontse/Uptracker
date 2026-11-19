@@ -98,6 +98,9 @@ def _param_values(conn: sqlite3.Connection, ds) -> dict[str, str]:
         # Self-referential entries (a value equal to its own ``[Token]``, e.g.
         # {"label": "[label]"}) are dropped: they would shadow the node-derived
         # value with the literal token, leaving e.g. "ping [label]" unresolved.
+        # Node-derived keys are never persisted anymore (the admin strips them
+        # and a migration cleans old rows), so a saved custom override of the
+        # same name is intentional and wins; a stale duplicate cannot occur.
         for k, v in templates.strip_self_referential(saved).items():
             vals[str(k).lower()] = "" if v is None else str(v)
     return vals

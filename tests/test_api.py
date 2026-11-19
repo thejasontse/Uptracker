@@ -897,3 +897,89 @@ def test_test_run_self_referential_param_value_uses_node(client):
     assert res["ok"]
     assert "[label]" not in res["raw"]
     assert res["parsed"][0]["txt"] == "web01"
+
+
+# --- Stale node-derived param shadowing ------------------------------------
+# The admin used to persist the node-derived [Param] fields into a dataset's
+# param_values. A saved copy then shadowed the live node value, so after a node
+# rename (or network-path change) the script kept using the stale value baked in
+# at save time — e.g. "ping [label]" resolving to an old host name. The fix is
+# to never persist node-derived keys: the admin strips them on save and a
+# migration cleans existing rows, so [label] / [Network-Path Reference] always
+# resolve from the current node. A genuine custom override of the same name is
+# still honoured (it is the only way to target something other than the node).
+
+def test_node_param_token_resolves_live_after_rename(client):
+    # With no saved copy (the new behaviour), [label] resolves to the node's
+    # current label even after a rename — the original bug. The node label is
+    # owned by the graph model, so the rename goes through PUT /api/graph.
+    _mk_node(client, node_id="n1", label="web01")
+    ds = client.post("/api/nodes/n1/datasets", json={
+        "name": "ping", "method": "bash", "script": "echo ping -c1 [label]"}).json()
+    m = client.post(f"/api/datasets/{ds['id']}/metrics", json={
+        "name": "tgt", "regex": r"-c1 (\S+)", "cast": "text"}).json()
+    # Rename the node after the dataset was saved (graph model is authoritative).
+    _mk_node(client, node_id="n1", label="web99")
+    res = client.post(f"/api/datasets/{ds['id']}/run").json()
+    assert "[label]" not in res["raw"]
+    assert res["metrics"][0]["txt"] == "web99"
+
+
+def test_network_path_param_resolves_live_after_change(client):
+    # [Network-Path Reference] resolves from the node's current path, not a copy
+    # saved earlier.
+    _mk_node(client, node_id="n1", label="web01")
+    client.patch("/api/nodes/n1", json={"network_path": "10.0.0.1"})
+    ds = client.post("/api/nodes/n1/datasets", json={
+        "name": "ping", "method": "bash", "script": "echo ping -c1 [Network-Path Reference]"}).json()
+    m = client.post(f"/api/datasets/{ds['id']}/metrics", json={
+        "name": "tgt", "regex": r"-c1 (\S+)", "cast": "text"}).json()
+    client.patch("/api/nodes/n1", json={"network_path": "10.0.0.2"})
+    res = client.post(f"/api/datasets/{ds['id']}/run").json()
+    assert "[Network-Path Reference]" not in res["raw"]
+    assert res["metrics"][0]["txt"] == "10.0.0.2"
+
+
+def test_custom_param_still_persists_and_resolves(client):
+    # A genuinely custom token (not node-derived) is unaffected: it persists and
+    # resolves at execution time.
+    _mk_node(client, node_id="n1", label="web01")
+    ds = client.post("/api/nodes/n1/datasets", json={
+        "name": "ping", "method": "bash", "script": "echo ping -c1 [Target]",
+        "param_values": {"Target": "10.0.0.5"}}).json()
+    assert _get_ds(client, ds["id"])["param_values"] == {"Target": "10.0.0.5"}
+    m = client.post(f"/api/datasets/{ds['id']}/metrics", json={
+        "name": "tgt", "regex": r"-c1 (\S+)", "cast": "text"}).json()
+    res = client.post(f"/api/datasets/{ds['id']}/run").json()
+    assert res["metrics"][0]["txt"] == "10.0.0.5"
+
+
+def test_intentional_label_override_still_wins(client):
+    # A saved value for a node-derived name that differs from the node is a
+    # deliberate override (e.g. pinging a different host than this node's label)
+    # and must still win — proving the fix does not break intentional overrides.
+    _mk_node(client, node_id="n1", label="web01")
+    ds = client.post("/api/nodes/n1/datasets", json={
+        "name": "ping", "method": "bash", "script": "echo ping -c1 [label]",
+        "param_values": {"label": "other-host"}}).json()
+    m = client.post(f"/api/datasets/{ds['id']}/metrics", json={
+        "name": "tgt", "regex": r"-c1 (\S+)", "cast": "text"}).json()
+    res = client.post(f"/api/datasets/{ds['id']}/run").json()
+    assert res["metrics"][0]["txt"] == "other-host"
+
+
+def test_migration_strips_known_params_from_existing_rows(client):
+    # A row seeded the old way (with a node-derived key baked into param_values)
+    # is cleaned by init_db's migration: the known key is removed, custom kept.
+    from app import db as _db
+    _mk_node(client, node_id="n1", label="web01")
+    ds = client.post("/api/nodes/n1/datasets", json={
+        "name": "legacy", "method": "bash", "script": "echo hi",
+        "param_values": {"Target": "10.0.0.5"}}).json()
+    # Simulate a legacy row: inject a node-derived key directly into the blob.
+    with _db.db_conn() as conn:
+        conn.execute("UPDATE datasets SET param_values=? WHERE id=?",
+                     [json.dumps({"label": "web01", "Target": "10.0.0.5"}), ds["id"]])
+    # Re-run init_db (as the app does at startup) and confirm the known key is gone.
+    _db.init_db()
+    assert _get_ds(client, ds["id"])["param_values"] == {"Target": "10.0.0.5"}

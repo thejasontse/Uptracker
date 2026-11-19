@@ -8,7 +8,7 @@ import { api } from './api.js';
 import { state } from './state.js';
 import { breadcrumb, esc, toast } from './util.js';
 import {
-  scanParams, paramValueMap, renderMustaches,
+  scanParams, paramValueMap, renderMustaches, customParamValues,
   paintParamFields, attachParamAutocomplete,
 } from './params.js';
 
@@ -190,14 +190,11 @@ function validateParams() {
 }
 
 // The user-entered [Param] values keyed by display name, limited to the tokens
-// actually referenced by the draft. Persisted verbatim (not resolved) so the
-// backend can substitute them at execution time.
+// actually referenced by the draft. Node-derived params are excluded (they
+// resolve live from the node at execution time), so only genuine custom tokens
+// are persisted verbatim for the backend to substitute at collection time.
 function paramValuesPayload() {
-  const out = {};
-  for (const name of draftParamNames()) {
-    if (paramValues[name] !== undefined && String(paramValues[name]).trim()) out[name] = paramValues[name];
-  }
-  return out;
+  return customParamValues(draftParamNames(), paramValues);
 }
 
 async function testRun() {
