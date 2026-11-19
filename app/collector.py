@@ -108,8 +108,14 @@ def _resolve(conn: sqlite3.Connection, ds, text) -> str:
     return templates.render_params(templates.render(text or "", ctx), _param_values(conn, ds))
 
 
-def collect_dataset(conn: sqlite3.Connection, dataset_id: int, *, persist: bool = True) -> dict:
+def collect_dataset(conn: sqlite3.Connection, dataset_id: int, *, persist: bool = True,
+                    source: str = "scheduled") -> dict:
     """Run one dataset and update latest values + node status.
+
+    ``source`` is ``"scheduled"`` for timer-driven runs (the default) or
+    ``"manual"`` for on-demand runs (the ``/run`` endpoints). It only affects
+    alert streak accounting: manual runs never advance or reset the consecutive
+    problem-run counter that gates ``trigger_count``.
 
     Returns a summary dict suitable for both persistence and the test endpoint.
     """
@@ -149,7 +155,7 @@ def collect_dataset(conn: sqlite3.Connection, dataset_id: int, *, persist: bool 
                      status_level_id=excluded.status_level_id, collected_at=excluded.collected_at""",
                 (m["id"], dataset_id, value.raw, value.num, value.txt, status_id, db.now_iso()),
             )
-            _maybe_alert(conn, m, status_id, value, levels)
+            _maybe_alert(conn, m, status_id, value, levels, source=source)
 
     if persist:
         conn.execute(
@@ -212,16 +218,56 @@ def recompute_node_status(conn: sqlite3.Connection, node_id: str) -> str | None:
     return lvl["name"] if lvl else None
 
 
+def _trigger_statuses(cfg: sqlite3.Row) -> set[str]:
+    """The set of status names that qualify a scheduled run to increment the alert
+    streak (``alert_configs.trigger_statuses``, a JSON array). Defaults to
+    {"warning","critical"} when unset or malformed, matching the historical behaviour."""
+    raw = cfg["trigger_statuses"] if "trigger_statuses" in cfg.keys() else None
+    if not raw:
+        return {"warning", "critical"}
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return {"warning", "critical"}
+    if isinstance(parsed, list) and parsed:
+        return {str(s) for s in parsed}
+    return {"warning", "critical"}
+
+
 def _maybe_alert(conn: sqlite3.Connection, metric: sqlite3.Row, status_id: int | None,
-                 value: ParsedValue, levels: dict[int, dict]) -> None:
+                 value: ParsedValue, levels: dict[int, dict], *, source: str = "scheduled") -> None:
     cfg = conn.execute("SELECT * FROM alert_configs WHERE metric_id=?", (metric["id"],)).fetchone()
     if not cfg or not cfg["enabled"]:
         return
     lvl = levels.get(status_id) if status_id else None
     status_name = lvl["name"] if lvl else "unknown"
-    # Only alert on problem statuses (warning/critical); good and unknown never
-    # page anyone. Honour only_on_change.
-    if status_name not in ("warning", "critical"):
+    qualifying = _trigger_statuses(cfg)
+
+    # Consecutive scheduled qualifying-run streak. Only scheduled runs touch it:
+    # a manual/on-demand run neither advances nor resets the counter, so a
+    # transient blip caught by hand cannot trigger (or clear) an email. A
+    # scheduled run in a non-qualifying status (e.g. good, or any status outside
+    # the configured trigger_statuses) resets the streak to 0 and never alerts.
+    streak = cfg["trigger_streak"] if "trigger_streak" in cfg.keys() else 0
+    if source == "scheduled":
+        if status_name in qualifying:
+            streak += 1
+        else:
+            streak = 0
+        conn.execute("UPDATE alert_configs SET trigger_streak=? WHERE metric_id=?",
+                     (streak, metric["id"]))
+
+    # Only alert on qualifying statuses; any other status never pages anyone.
+    # Honour only_on_change.
+    if status_name not in qualifying:
+        return
+    # Require the configured number of consecutive scheduled problem runs before
+    # the first email (trigger_count=1 keeps the historical alert-on-first-run).
+    # This gate applies to scheduled runs only: a manual/on-demand run is fully
+    # neutral to streak accounting and alerts immediately, without advancing or
+    # resetting the counter.
+    required = max(1, cfg["trigger_count"] if "trigger_count" in cfg.keys() else 1)
+    if source == "scheduled" and streak < required:
         return
     if cfg["only_on_change"] and cfg["last_status"] == status_name:
         return

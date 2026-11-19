@@ -28,6 +28,17 @@ let dataset = null;      // the dataset row (script/method for test run)
 let nodeRef = null;      // the owning node (for [Param] auto-fill)
 let ctx = null;          // { go, onSaved } from the panel router
 let paramValues = {};    // user-entered [Param] values, keyed by display name
+
+// Decode a stored default trigger_statuses JSON string (from Settings) into an
+// array, falling back to ["warning","critical"] when unset or malformed.
+function _parseStatusDefault(raw) {
+  if (!raw) return ['warning', 'critical'];
+  try {
+    const p = JSON.parse(raw);
+    if (Array.isArray(p) && p.length) return p.map(String);
+  } catch { /* fall through */ }
+  return ['warning', 'critical'];
+}
 let lastTest = null;     // parsed value entry from the most recent test run
 
 // Client-side mirror of app/rules.py rule_matches(). *value* is a parsed test
@@ -152,12 +163,15 @@ function ruleRow(r, i) {
   const noValue = r.op === 'missing' || r.op === 'present';
   // One line per rule: fixed-column grid (see .rule-grid in app.css) so the
   // selects fill their column instead of wrapping like the old flex row did.
-  // "between" takes two numbers, so show a min,max hint under its value field.
-  const hint = r.op === 'between' ? '<div class="muted" style="font-size:11px">min, max</div>' : '';
+  // missing/present need no operand, so the value cell renders as an empty
+  // placeholder span — the field is removed but the grid column (and thus the
+  // alignment of every other rule row) is preserved. "between" takes two
+  // numbers, hinted via its placeholder.
+  const ph = r.op === 'between' ? 'min, max' : 'value';
   return `
   <div class="rule-grid">
     <select data-ri="${i}" data-rulefield="op">${OPS.map(([v, l]) => `<option value="${v}" ${r.op === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
-    <span><input data-ri="${i}" data-rulefield="value" value="${esc(r.value)}" placeholder="value" ${noValue ? 'disabled' : ''}>${hint}</span>
+    ${noValue ? '<span></span>' : `<span><input data-ri="${i}" data-rulefield="value" value="${esc(r.value)}" placeholder="${ph}"></span>`}
     <span class="muted">→</span>
     <select data-ri="${i}" data-rulefield="status_level_id">${levels.map((l) => `<option value="${l.id}" ${r.status_level_id === l.id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select>
     <button class="small danger" data-ri="${i}" data-delrule>×</button>
@@ -201,18 +215,27 @@ function renderAlert() {
         body: d.alert_default_body || '{{node.label}} — metric {{metric.name}} is {{status}} (value={{value}}).',
         cooldown_s: Number(d.alert_default_cooldown_s || 3600),
         only_on_change: true,
+        trigger_count: Number(d.alert_default_trigger_count || 1),
+        trigger_statuses: _parseStatusDefault(d.alert_default_trigger_statuses),
       };
       renderAlert();
     };
     return;
   }
   const a = draft.alert;
+  // All status levels (including unknown) are selectable as streak-qualifying
+  // statuses; the stored set decides which are pre-selected.
+  const allStatuses = (state.snapshot?.status_levels || []).map((l) => l.name);
+  const selStatuses = Array.isArray(a.trigger_statuses) && a.trigger_statuses.length ? a.trigger_statuses : ['warning', 'critical'];
   box.innerHTML = `
     <div class="card" style="margin-top:12px">
       <div class="head"><span class="t">Email alert</span>
         <label class="toggle"><input data-alertfield="enabled" type="checkbox" ${a.enabled ? 'checked' : ''}> enabled</label>
         <label class="toggle"><input data-alertfield="only_on_change" type="checkbox" ${a.only_on_change ? 'checked' : ''}> on change</label>
         <button class="small danger" id="btnDelAlert">Remove</button></div>
+      <div class="row"><div style="flex:1"><label class="f">Fire after (runs)</label><input data-alertfield="trigger_count" type="number" min="1" value="${a.trigger_count ?? 1}"></div>
+        <div style="flex:2"><label class="f">Qualifying statuses (Ctrl/Cmd-click for multiple)</label>
+          <select data-alertfield="trigger_statuses" multiple size="4">${allStatuses.map((s) => `<option value="${esc(s)}" ${selStatuses.includes(s) ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></div></div>
       <div class="row"><div style="flex:3"><label class="f">Recipients (comma separated)</label>
         <input data-alertfield="recipients" value="${esc(a.recipients)}"></div>
         <div style="flex:1"><label class="f">Cooldown (s)</label><input data-alertfield="cooldown_s" type="number" value="${a.cooldown_s}"></div></div>
@@ -220,7 +243,10 @@ function renderAlert() {
       <label class="f">Body</label><textarea data-alertfield="body" style="min-height:48px">${esc(a.body)}</textarea>
     </div>`;
   box.querySelectorAll('[data-alertfield]').forEach((el) => {
-    el.onchange = () => { draft.alert[el.dataset.alertfield] = el.type === 'number' ? Number(el.value) : (el.type === 'checkbox' ? el.checked : el.value); };
+    el.onchange = () => {
+      if (el.multiple) draft.alert[el.dataset.alertfield] = [...el.selectedOptions].map((o) => o.value);
+      else draft.alert[el.dataset.alertfield] = el.type === 'number' ? Number(el.value) : (el.type === 'checkbox' ? el.checked : el.value);
+    };
   });
   box.querySelector('#btnDelAlert').onclick = () => { draft.alert = null; renderAlert(); };
 }

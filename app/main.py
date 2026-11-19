@@ -170,6 +170,18 @@ def _safe_json_obj(raw) -> dict:
     return obj if isinstance(obj, dict) else {}
 
 
+def _parse_trigger_statuses(raw) -> list[str]:
+    """Decode a stored ``trigger_statuses`` JSON array, falling back to the default
+    {"warning","critical"} when unset or malformed."""
+    if not raw:
+        return ["warning", "critical"]
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return ["warning", "critical"]
+    return [str(s) for s in parsed] if isinstance(parsed, list) and parsed else ["warning", "critical"]
+
+
 def _alert_dict(conn, metric_id: int) -> dict | None:
     a = conn.execute("SELECT * FROM alert_configs WHERE metric_id=?", (metric_id,)).fetchone()
     if not a:
@@ -178,6 +190,9 @@ def _alert_dict(conn, metric_id: int) -> dict | None:
         "id": a["id"], "enabled": bool(a["enabled"]), "recipients": a["recipients"],
         "subject": a["subject"], "body": a["body"], "cooldown_s": a["cooldown_s"],
         "only_on_change": bool(a["only_on_change"]), "last_status": a["last_status"], "last_sent_at": a["last_sent_at"],
+        "trigger_count": a["trigger_count"] if "trigger_count" in a.keys() else 1,
+        "trigger_streak": a["trigger_streak"] if "trigger_streak" in a.keys() else 0,
+        "trigger_statuses": _parse_trigger_statuses(a["trigger_statuses"] if "trigger_statuses" in a.keys() else None),
     }
 
 
@@ -272,6 +287,9 @@ def _batched_snapshot(conn, levels: dict[int, dict]) -> list[dict]:
                 "subject": a["subject"], "body": a["body"], "cooldown_s": a["cooldown_s"],
                 "only_on_change": bool(a["only_on_change"]), "last_status": a["last_status"],
                 "last_sent_at": a["last_sent_at"],
+                "trigger_count": a["trigger_count"] if "trigger_count" in a.keys() else 1,
+                "trigger_streak": a["trigger_streak"] if "trigger_streak" in a.keys() else 0,
+                "trigger_statuses": _parse_trigger_statuses(a["trigger_statuses"] if "trigger_statuses" in a.keys() else None),
             },
             "value": None if val is None else _value_dict(val, levels),
         }
@@ -388,7 +406,7 @@ def run_node_now(node_id: str, background_tasks: BackgroundTasks) -> dict:
         for did in ids:
             try:
                 with db.db_conn() as c2:
-                    collector.collect_dataset(c2, did)
+                    collector.collect_dataset(c2, did, source="manual")
             except Exception:  # noqa: BLE001 - one bad dataset must not abort the rest
                 pass
 
@@ -506,7 +524,7 @@ class RunBody(BaseModel):
 def run_dataset_now(dataset_id: int) -> dict:
     with _conn() as conn:
         _require(conn, "datasets", dataset_id, "dataset")
-        return collector.collect_dataset(conn, dataset_id)
+        return collector.collect_dataset(conn, dataset_id, source="manual")
 
 
 class TestRunBody(BaseModel):
@@ -645,20 +663,26 @@ class AlertBody(BaseModel):
     body: str = ""
     cooldown_s: int = 3600
     only_on_change: bool = True
+    trigger_count: int = 1
+    # Status names that qualify a scheduled run to increment the streak. None → default.
+    trigger_statuses: list[str] | None = None
 
 
 @app.put("/api/metrics/{metric_id}/alert")
 def upsert_alert(metric_id: int, body: AlertBody) -> dict:
+    statuses = body.trigger_statuses if body.trigger_statuses else ["warning", "critical"]
     with _conn() as conn:
         _require(conn, "metrics", metric_id, "metric")
         conn.execute(
-            """INSERT INTO alert_configs (metric_id, enabled, recipients, subject, body, cooldown_s, only_on_change)
-               VALUES (?,?,?,?,?,?,?)
+            """INSERT INTO alert_configs (metric_id, enabled, recipients, subject, body, cooldown_s, only_on_change, trigger_count, trigger_statuses)
+               VALUES (?,?,?,?,?,?,?,?,?)
                ON CONFLICT(metric_id) DO UPDATE SET enabled=excluded.enabled, recipients=excluded.recipients,
                  subject=excluded.subject, body=excluded.body, cooldown_s=excluded.cooldown_s,
-                 only_on_change=excluded.only_on_change""",
+                 only_on_change=excluded.only_on_change, trigger_count=excluded.trigger_count,
+                 trigger_statuses=excluded.trigger_statuses""",
             (metric_id, 1 if body.enabled else 0, body.recipients, body.subject, body.body,
-             body.cooldown_s, 1 if body.only_on_change else 0),
+             body.cooldown_s, 1 if body.only_on_change else 0, max(1, body.trigger_count),
+             json.dumps(statuses)),
         )
         return _alert_dict(conn, metric_id)
 

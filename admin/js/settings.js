@@ -2,6 +2,7 @@
 // Status levels are a fixed vocabulary (good/warning/critical/unknown) chosen
 // by rules, so there is nothing to edit here.
 import { api } from './api.js';
+import { state } from './state.js';
 import { esc, toast } from './util.js';
 
 export function renderSettingsView(body, ctx) {
@@ -14,6 +15,13 @@ export function renderSettingsView(body, ctx) {
 
   api.settings().then(async (s) => {
     host.classList.remove('muted');
+    // Which statuses count toward "fire after" (default warning + critical).
+    const allStatuses = (state.snapshot?.status_levels || []).map((l) => l.name);
+    let defStatuses;
+    try { defStatuses = JSON.parse(s.alert_default_trigger_statuses); } catch { defStatuses = null; }
+    if (!Array.isArray(defStatuses) || !defStatuses.length) defStatuses = ['warning', 'critical'];
+    const optStatuses = (allStatuses.length ? allStatuses : ['good', 'warning', 'critical', 'unknown'])
+      .map((n) => `<option value="${esc(n)}" ${defStatuses.includes(n) ? 'selected' : ''}>${esc(n)}</option>`).join('');
     host.innerHTML = `
       <label class="f">Dashboard refresh interval (s)</label><input id="s_poll" type="number" value="${esc(s.poll_interval_s || 15)}">
       <div class="row"><label class="toggle"><input id="s_sched" type="checkbox" ${s.scheduler_enabled === '1' ? 'checked' : ''}> Scheduler enabled</label></div>
@@ -38,6 +46,11 @@ export function renderSettingsView(body, ctx) {
       <textarea id="s_abody" style="min-height:48px">${esc(s.alert_default_body || '')}</textarea>
       <div class="row">
         <div style="flex:1"><label class="f">Cooldown (s)</label><input id="s_acool" type="number" value="${esc(s.alert_default_cooldown_s || '3600')}"></div>
+        <div style="flex:1"><label class="f">Fire after (runs)</label><input id="s_atrig" type="number" min="1" value="${esc(s.alert_default_trigger_count || '1')}"></div>
+      </div>
+      <div class="row">
+        <div style="flex:1"><label class="f">Fire after counts these statuses</label>
+          <select id="s_astatuses" multiple size="4">${optStatuses}</select></div>
       </div>
 
       <div class="row" style="margin-top:12px"><button id="save" class="primary small">Save</button></div>`;
@@ -62,6 +75,8 @@ export function renderSettingsView(body, ctx) {
         alert_default_subject: host.querySelector('#s_asubj').value,
         alert_default_body: host.querySelector('#s_abody').value,
         alert_default_cooldown_s: host.querySelector('#s_acool').value,
+        alert_default_trigger_count: host.querySelector('#s_atrig').value,
+        alert_default_trigger_statuses: JSON.stringify([...host.querySelector('#s_astatuses').selectedOptions].map((o) => o.value)),
       };
       const pass = host.querySelector('#s_pass').value;
       if (pass) values.smtp_password = pass;

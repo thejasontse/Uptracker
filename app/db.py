@@ -150,6 +150,9 @@ CREATE TABLE IF NOT EXISTS alert_configs (
     body           TEXT NOT NULL DEFAULT '',
     cooldown_s     INTEGER NOT NULL DEFAULT 3600,
     only_on_change INTEGER NOT NULL DEFAULT 1,
+    trigger_count  INTEGER NOT NULL DEFAULT 1,      -- consecutive scheduled qualifying runs required before emailing
+    trigger_streak INTEGER NOT NULL DEFAULT 0,      -- runtime counter of consecutive scheduled qualifying runs
+    trigger_statuses TEXT NOT NULL DEFAULT '["warning","critical"]',  -- JSON array of status names that qualify the streak
     last_status    TEXT,                             -- status when last alerted
     last_sent_at   TEXT
 );
@@ -224,6 +227,7 @@ def init_db() -> None:
         migrate_mustache_tokens(conn)
         migrate_dataset_param_values(conn)
         migrate_dataset_last_output(conn)
+        migrate_alert_trigger_count(conn)
         row = conn.execute("SELECT json FROM graph_model WHERE id=1").fetchone()
         if row is None:
             conn.execute(
@@ -261,6 +265,26 @@ def migrate_dataset_last_output(conn: sqlite3.Connection) -> None:
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(datasets)")}
     if "last_output" not in cols:
         conn.execute("ALTER TABLE datasets ADD COLUMN last_output TEXT")
+
+
+def migrate_alert_trigger_count(conn: sqlite3.Connection) -> None:
+    """Add ``alert_configs.trigger_count`` (how many consecutive scheduled runs in a
+    qualifying status are required before an email is sent; 1 = alert on the first
+    qualifying run, the historical behaviour), ``trigger_streak`` (the runtime counter
+    of consecutive scheduled qualifying runs), and ``trigger_statuses`` (a JSON array of
+    status names that qualify the streak to increment) to databases created before these
+    columns existed. On-demand runs neither increment nor reset the streak, so a transient
+    blip caught by a manual run cannot trigger an email. Idempotent — a no-op once the
+    columns exist."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(alert_configs)")}
+    if "trigger_count" not in cols:
+        conn.execute("ALTER TABLE alert_configs ADD COLUMN trigger_count INTEGER NOT NULL DEFAULT 1")
+    if "trigger_streak" not in cols:
+        conn.execute("ALTER TABLE alert_configs ADD COLUMN trigger_streak INTEGER NOT NULL DEFAULT 0")
+    if "trigger_statuses" not in cols:
+        conn.execute(
+            "ALTER TABLE alert_configs ADD COLUMN trigger_statuses TEXT NOT NULL DEFAULT '[\"warning\",\"critical\"]'"
+        )
 
 
 # Legacy node/template network-resource values remapped onto the current types.
@@ -428,6 +452,8 @@ def _seed_settings(conn: sqlite3.Connection) -> None:
         "alert_default_subject": "{{status}}: {{node.label}} / {{metric.name}}",
         "alert_default_body": "{{node.label}} — metric {{metric.name}} is {{status}} (value={{value}}).",
         "alert_default_cooldown_s": "3600",
+        "alert_default_trigger_count": "1",
+        "alert_default_trigger_statuses": '["warning","critical"]',
     }
     for k, v in defaults.items():
         conn.execute(

@@ -354,6 +354,119 @@ def test_alert_own_subject_body_wins_over_defaults(client, monkeypatch):
     assert subj == "Own critical" and body == "own body 9999"
 
 
+def _alert_metric_trigger_count(client, tc, trigger_statuses=None):
+    """A critical-firing metric with an alert requiring ``tc`` consecutive
+    scheduled problem runs. Returns (ds_id, metric_id)."""
+    _mk_node(client, "n1", "web01")
+    ds = client.post("/api/nodes/n1/datasets", json={"name": "d", "method": "bash", "script": "echo rtt=9999"}).json()
+    m = client.post(f"/api/datasets/{ds['id']}/metrics", json={"name": "rtt", "regex": r"rtt=(\d+)"}).json()
+    critical = next(l for l in client.get("/api/status-levels").json()["status_levels"] if l["name"] == "critical")
+    client.post(f"/api/metrics/{m['id']}/rules", json={"op": "gt", "value": "100", "status_level_id": critical["id"]})
+    alert = {"enabled": True, "recipients": "ops@x.io", "subject": "S", "body": "B",
+             "cooldown_s": 0, "only_on_change": False, "trigger_count": tc}
+    if trigger_statuses is not None:
+        alert["trigger_statuses"] = trigger_statuses
+    client.put(f"/api/metrics/{m['id']}/alert", json=alert)
+    return ds["id"], m["id"]
+
+
+def _rule_ids(client, metric_id):
+    for node in client.get("/api/snapshot").json().get("nodes", []):
+        for ds in node.get("datasets", []):
+            for m in ds.get("metrics", []):
+                if m["id"] == metric_id:
+                    return [r["id"] for r in m["rules"]]
+    return []
+
+
+def test_alert_trigger_count_counts_only_scheduled_runs(client, monkeypatch):
+    from app import collector, db, mailer
+    sent = []
+    monkeypatch.setattr(mailer, "send_email", lambda conn, r, s, b: sent.append((r, s, b)) or True)
+    ds_id, _ = _alert_metric_trigger_count(client, 3)
+
+    def sched():
+        with db.db_conn() as c:
+            collector.collect_dataset(c, ds_id, source="scheduled")
+
+    # Two scheduled problem runs are not enough; a manual run in between neither
+    # counts nor resets. The third scheduled run crosses the threshold.
+    sched()
+    assert not sent
+    client.post(f"/api/datasets/{ds_id}/run")  # manual: neutral to streak, alerts on its own
+    assert len(sent) == 1, "a manual run should alert immediately regardless of trigger_count"
+    sent.clear()
+    sched()
+    assert not sent, "streak=2 < 3 (the manual run must not have advanced it)"
+    sched()
+    assert len(sent) == 1, "third scheduled problem run fires the alert"
+
+
+def test_alert_trigger_count_resets_on_good_run(client, monkeypatch):
+    from app import collector, db, mailer
+    sent = []
+    monkeypatch.setattr(mailer, "send_email", lambda conn, r, s, b: sent.append((r, s, b)) or True)
+    ds_id, m_id = _alert_metric_trigger_count(client, 2)
+    critical = next(l for l in client.get("/api/status-levels").json()["status_levels"] if l["name"] == "critical")
+
+    def sched():
+        with db.db_conn() as c:
+            collector.collect_dataset(c, ds_id, source="scheduled")
+
+    def set_rule(op_value):
+        for rid in _rule_ids(client, m_id):
+            client.delete(f"/api/rules/{rid}")
+        client.post(f"/api/metrics/{m_id}/rules",
+                    json={"op": "gt", "value": op_value, "status_level_id": critical["id"]})
+
+    sched()                       # streak=1, no alert
+    assert not sent
+    set_rule("999999")            # value now good -> next scheduled run resets streak
+    sched()
+    assert not sent
+    set_rule("100")               # back to critical: needs two fresh scheduled runs
+    sched()                       # streak=1 (reset worked), no alert
+    assert not sent
+    sched()                       # streak=2 -> fires
+    assert len(sent) == 1
+
+
+def test_alert_trigger_statuses_filter_qualifies_runs(client, monkeypatch):
+    """Only runs whose status is in trigger_statuses count toward the streak;
+    a warning run must not advance a critical-only alert (nor reset it)."""
+    from app import collector, db, mailer
+    sent = []
+    monkeypatch.setattr(mailer, "send_email", lambda conn, r, s, b: sent.append((r, s, b)) or True)
+    ds_id, m_id = _alert_metric_trigger_count(client, 2, trigger_statuses=["critical"])
+    levels = {l["name"]: l for l in client.get("/api/status-levels").json()["status_levels"]}
+
+    def sched():
+        with db.db_conn() as c:
+            collector.collect_dataset(c, ds_id, source="scheduled")
+
+    def set_rule(level_name):
+        for rid in _rule_ids(client, m_id):
+            client.delete(f"/api/rules/{rid}")
+        client.post(f"/api/metrics/{m_id}/rules",
+                    json={"op": "gt", "value": "100", "status_level_id": levels[level_name]["id"]})
+
+    set_rule("warning")
+    sched()                       # warning is not qualifying -> streak stays 0, no alert
+    assert not sent
+    set_rule("critical")
+    sched()                       # first qualifying run: streak=1 < 2, no alert
+    assert not sent
+    set_rule("warning")
+    sched()                       # non-qualifying scheduled run resets the streak to 0
+    assert not sent
+    set_rule("critical")
+    sched()                       # qualifying again but streak restarted at 1, no alert
+    assert not sent
+    set_rule("critical")
+    sched()                       # second consecutive qualifying run -> streak=2, fires
+    assert len(sent) == 1
+
+
 # ---------------- import / export ----------------
 import base64
 import contextlib
