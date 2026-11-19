@@ -516,14 +516,32 @@ class TestRunBody(BaseModel):
     credential_id: int | None = None
     secret: str | None = None
     metrics: list[dict] = []
+    node_id: str | None = None
+    param_values: dict = {}
 
 
 @app.post("/api/test/run")
 def test_run(body: TestRunBody) -> dict:
-    """Dry-run a draft dataset definition; nothing is persisted."""
+    """Dry-run a draft dataset definition; nothing is persisted.
+
+    ``[Param]`` tokens in the script and each metric regex are resolved the
+    same way collection resolves them: node-derived parameters seed the map,
+    then the supplied ``param_values`` override them (case-insensitively).
+    """
     _validate_method(body.method)
     from .executor import run_dataset as _run
     from .parser import extract
+
+    pvals: dict[str, str] = {}
+    if body.node_id is not None:
+        with _conn() as conn:
+            node = conn.execute("SELECT * FROM nodes WHERE id=?", (body.node_id,)).fetchone()
+        if node is not None:
+            pvals.update(tpl.known_params(node))
+    for k, v in (body.param_values or {}).items():
+        pvals[str(k).lower()] = "" if v is None else str(v)
+
+    script = tpl.render_params(body.script, pvals)
     secret, username = None, None
     if body.credential_id:
         with _conn() as conn:
@@ -532,10 +550,11 @@ def test_run(body: TestRunBody) -> dict:
                 raise HTTPException(400, "credential not found")
             username = row["username"]
             secret = body.secret if body.secret else secret_box().decrypt(row["secret_enc"])
-    result = _run(body.method, body.script, body.timeout_s, secret, username)
+    result = _run(body.method, script, body.timeout_s, secret, username)
     parsed = []
     for m in body.metrics:
-        v = extract(result.raw, m.get("regex", ""), m.get("group_index", 1), m.get("cast", "auto"))
+        regex = tpl.render_params(m.get("regex", ""), pvals)
+        v = extract(result.raw, regex, m.get("group_index", 1), m.get("cast", "auto"))
         parsed.append({"name": m.get("name", ""), "raw": v.raw, "num": v.num, "txt": v.txt, "error": v.error})
     return {"ok": result.ok, "raw": result.raw[:20000], "error": result.error, "parsed": parsed}
 

@@ -63,6 +63,37 @@ def test_rule_missing_present():
     assert not rule_matches(_rule("gt", "1"), v)  # value-comparison can't match missing
 
 
+def test_rule_is_is_not_bool_words():
+    up = extract("state=UP", r"state=(\w+)", 1, "str")
+    down = extract("state=DOWN", r"state=(\w+)", 1, "str")
+    # "up"/"down" are recognised boolean words; is/is_not compare tri-state bools.
+    assert rule_matches(_rule("is", "true"), up)
+    assert rule_matches(_rule("is_not", "false"), up)
+    assert rule_matches(_rule("is", "false"), down)
+    assert rule_matches(_rule("is_not", "true"), down)
+    # An unrecognisable value never matches is/is_not.
+    maybe = extract("state=maybe", r"state=(\w+)", 1, "str")
+    assert not rule_matches(_rule("is", "true"), maybe)
+    assert not rule_matches(_rule("is_not", "true"), maybe)
+
+
+def test_rule_is_numeric_nonzero():
+    # A numeric value with no bool word falls back to num != 0.
+    v = extract("x 7", r"(\d+)", 1, "auto")
+    assert rule_matches(_rule("is", "true"), v)
+    assert not rule_matches(_rule("is", "false"), v)
+
+
+def test_rule_between_range():
+    v = extract("temp 50", r"(\d+)", 1, "auto")
+    assert rule_matches(_rule("between", "40,60"), v)
+    assert rule_matches(_rule("between", "50,50"), v)   # inclusive on both ends
+    assert not rule_matches(_rule("between", "60,70"), v)
+    # A malformed range (not exactly two numbers) never matches.
+    assert not rule_matches(_rule("between", "40"), v)
+    assert not rule_matches(_rule("between", "abc,def"), v)
+
+
 def test_evaluate_metric_worst_status_wins():
     # Two rules match; the worse (higher-rank) status wins regardless of priority.
     ranks = {1: 10, 2: 20, 3: 30}

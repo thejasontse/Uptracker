@@ -39,16 +39,18 @@ html, body {
 #app { display: flex; flex-direction: column; height: 100vh; }
 main { flex: 1; display: flex; min-height: 0; position: relative; }
 
-/* Canvas */
-#canvas { flex: 1; min-width: 0; }
+/* Canvas — stretches 14px under the dock so the gutter around the collapse tab
+   shows the canvas (grid) instead of an opaque body strip. #dock paints above it. */
+#canvas { flex: 1; min-width: 0; margin-right: -14px; }
 
 /* Dock — mirrors the nodegraph menu/panel surface */
 #dock {
   position: relative;
-  margin-left: 14px; /* room for the collapse tab, which sits outside on the left */
+  /* Room for the collapse tab, which sits outside on the left. The strip above
+     and below the tab is transparent so the canvas shows through — only the tab
+     itself (and the panel) have a surface. */
+  margin-left: 14px; background: transparent;
   width: var(--dock-w); display: flex; flex-direction: column;
-  border-left: 1px solid var(--ng-node-border);
-  background: var(--ng-node-bg);
   font: 12px system-ui, sans-serif;
 }
 /* Collapse toggle is a thin tab sticking out of the dock's left edge — no header bar. */
@@ -62,10 +64,15 @@ main { flex: 1; display: flex; min-height: 0; position: relative; }
   font-size: 12px; line-height: 1; cursor: pointer;
 }
 #dock .dock-corner:hover { color: var(--ng-fg, #fff); }
+/* The panel surface itself (excludes the transparent margin strip and the tab). */
+#dockBody {
+  flex: 1; overflow-y: auto;
+  border-left: 1px solid var(--ng-node-border);
+  background: var(--ng-node-bg);
+}
 /* Collapsed dock: no panel surface at all — only the tab sticks out. */
-#dock.collapsed { width: 0; border-left: none; background: transparent; }
+#dock.collapsed { width: 0; }
 #dock.collapsed #dockBody { display: none; }
-#dockBody { flex: 1; overflow-y: auto; }
 
 /* Folder tabs — the home view's primary navigation (settings/credentials/
    import/export). The active tab shares the content surface's background and
@@ -242,22 +249,27 @@ main.table-max { flex: none; height: 0; overflow: hidden; }
 /* Sortable headers: click cycles ascending → descending → unsorted. */
 #nodesTable th[data-col] { cursor: pointer; user-select: none; }
 
-/* Toast — lightweight replacement for alert() popups. */
+/* Toast — lightweight replacement for alert() popups. Sits just above the nodes
+   table footer (the bottom of the canvas/dock area), never over the table itself;
+   when the dock is open the JS adds .toast-dock and an inline left to float it
+   over the panel. Kept compact so it never covers the breadcrumb at the top. */
 #sm-toast {
   position: fixed;
-  bottom: 196px; /* just above the 180px table footer + a little gap */
+  bottom: calc(180px + 12px);
   left: 50%;
   transform: translateX(-50%);
-  z-index: 100;
-  max-width: 80vw;
-  padding: 8px 16px;
+  z-index: 200;
+  max-width: min(80vw, 360px);
+  padding: 7px 14px;
   border-radius: 6px;
   border: 1px solid var(--ng-node-border);
   background: var(--ng-node-bg);
   color: var(--ng-text);
   box-shadow: 0 4px 16px #00000033;
   font: 12px system-ui, sans-serif;
+  text-align: center;
 }
+#sm-toast.toast-dock { max-width: calc(var(--dock-w) - 32px); }
 #sm-toast.error { border-color: var(--ng-danger); color: var(--ng-danger); }
 
 /* [Param] autocomplete popup — anchored under the field being typed in. */

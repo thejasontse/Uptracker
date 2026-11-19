@@ -102,7 +102,20 @@ export function renderMetricsView(body, node, ds, navCtx) {
   };
   body.querySelector('#btnTest').onclick = () => testRun();
   body.querySelector('#btnSave').onclick = async () => {
-    try { await save(); await ctx.onSaved(); toast('Saved.'); ctx.go({ view: 'metrics', dsId: dataset.id, nodeId: state.selectedId }); }
+    try {
+      await save();
+      // Persist the [Param] values alongside the metrics so they survive a
+      // reload and are used by scheduled collection. Send the full dataset
+      // fields (patch replaces them) with param_values added.
+      await api.patchDataset(dataset.id, {
+        name: dataset.name, method: dataset.method, script: dataset.script,
+        timeout_s: dataset.timeout_s, interval_s: dataset.interval_s,
+        enabled: dataset.enabled, credential_id: dataset.credential ? dataset.credential.id : null,
+        param_values: paramValues,
+      });
+      dataset.param_values = { ...paramValues };
+      await ctx.onSaved(); toast('Saved.');
+    }
     catch (e) { toast(e.message, 'error'); }
   };
 }
@@ -159,14 +172,14 @@ function renderMetrics() {
 async function testRun() {
   const out = document.getElementById('testOut');
   out.textContent = 'running…';
-  // The dry-run endpoint does not resolve [Param] tokens, so substitute the
-  // current values client-side before sending the draft.
-  const values = paramValueMap(nodeRef, paramValues);
+  // The dry-run endpoint resolves [Param] tokens server-side (node-derived
+  // params + the values entered here), so send the raw script/regex as stored.
   try {
     const res = await api.testRun({
-      method: dataset.method, script: substituteParams(dataset.script, values), timeout_s: dataset.timeout_s,
+      method: dataset.method, script: dataset.script, timeout_s: dataset.timeout_s,
       credential_id: dataset.credential ? dataset.credential.id : null,
-      metrics: draft.map((m) => ({ name: m.name, regex: substituteParams(m.regex, values), group_index: m.group_index, cast: m.cast })),
+      node_id: nodeRef ? nodeRef.id : state.selectedId, param_values: paramValues,
+      metrics: draft.map((m) => ({ name: m.name, regex: m.regex, group_index: m.group_index, cast: m.cast })),
     });
     out.innerHTML = res.ok ? '<span class="ok">ok</span>' : `<span class="err">${esc(res.error || 'failed')}</span>`;
     lastTest = {};

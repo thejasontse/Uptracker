@@ -248,9 +248,20 @@ async function commit(node, ds, ctx, then) {
     credential_id: draft.credential_id, secret: draft.secret,
     param_values: paramValuesPayload(),
   };
+  // Branch on draft.id, not the `ds` closure arg: after a create the editor
+  // stays open with ds still null, so a second Save must PATCH the row we just
+  // made — otherwise it INSERTs a duplicate dataset.
+  const isCreate = !draft.id;
+  // Guard against double-clicking Save (or Save then Add Metrics) while the
+  // first request is still in flight, which also created duplicates.
+  const btnSave = document.getElementById('btnSave');
+  const btnMetrics = document.getElementById('btnMetrics');
+  if (btnSave) btnSave.disabled = true;
+  if (btnMetrics) btnMetrics.disabled = true;
   try {
-    const saved = ds ? await api.patchDataset(ds.id, body) : await api.createDataset(node.id, body);
-    if (!ds) await createTemplateMetrics(saved.id, draft.metrics);
+    const saved = isCreate ? await api.createDataset(node.id, body) : await api.patchDataset(draft.id, body);
+    draft.id = saved.id;
+    if (isCreate) await createTemplateMetrics(saved.id, draft.metrics);
     await ctx.onSaved();
     if (then === 'metrics') {
       ctx.go({ view: 'metrics', dsId: saved.id, nodeId: node.id });
@@ -271,6 +282,9 @@ async function commit(node, ds, ctx, then) {
     } else {
       toast(e.message, 'error');
     }
+  } finally {
+    if (btnSave) btnSave.disabled = false;
+    if (btnMetrics) btnMetrics.disabled = false;
   }
 }
 

@@ -141,6 +141,35 @@ def test_test_run_dry(client):
     assert client.get("/api/snapshot").json()["nodes"] == []
 
 
+def test_test_run_resolves_params(client):
+    # Bug: outside the dataset/metric view, [Param] tokens were sent literally.
+    # The dry-run must substitute param_values (and node-derived params) into
+    # both the script and each metric regex before executing.
+    _mk_node(client)  # n1 / web01 -> network path etc. available as known params
+    res = client.post("/api/test/run", json={
+        "method": "bash",
+        "script": "echo host=[Host] label=[label]",
+        "node_id": "n1",
+        "param_values": {"Host": "db.internal"},
+        "metrics": [{"name": "host", "regex": r"host=(\S+)", "group_index": 1, "cast": "str"}],
+    }).json()
+    assert res["ok"]
+    # [Host] replaced from param_values; [label] replaced from the node's known params.
+    assert "host=db.internal label=web01" in res["raw"]
+    assert res["parsed"][0]["txt"] == "db.internal"
+
+
+def test_test_run_resolves_param_in_regex(client):
+    # A [Param] inside a metric regex is resolved too.
+    res = client.post("/api/test/run", json={
+        "method": "bash",
+        "script": "echo status=UP",
+        "param_values": {"Key": "status"},
+        "metrics": [{"name": "st", "regex": r"[Key]=(\w+)", "group_index": 1, "cast": "str"}],
+    }).json()
+    assert res["ok"] and res["parsed"][0]["txt"] == "UP"
+
+
 # ---------------- templates API ----------------
 def test_template_save_and_apply(client):
     _mk_node(client)

@@ -40,6 +40,9 @@ html, body {
 }
 #app { display: flex; flex-direction: column; height: 100vh; }
 main { flex: 1; display: flex; min-height: 0; position: relative; }
+/* Canvas — stretches 14px under the dock so the gutter around the collapse tab
+   shows the canvas (grid) instead of an opaque body strip. #dock paints above it. */
+#canvas { margin-right: -14px; }
 
 /* Canvas */
 #canvas { flex: 1; min-width: 0; }
@@ -47,10 +50,11 @@ main { flex: 1; display: flex; min-height: 0; position: relative; }
 /* Dock — mirrors the nodegraph menu/panel surface */
 #dock {
   position: relative;
-  margin-left: 14px; /* room for the collapse tab, which sits outside on the left */
+  /* Room for the collapse tab, which sits outside on the left. The strip above
+     and below the tab is transparent so the canvas shows through — only the tab
+     itself (and the panel) have a surface. */
+  margin-left: 14px; background: transparent;
   width: var(--dock-w); display: flex; flex-direction: column;
-  border-left: 1px solid var(--ng-node-border);
-  background: var(--ng-node-bg);
   font: 12px system-ui, sans-serif;
 }
 /* Collapse toggle is a thin tab sticking out of the dock's left edge — no header bar. */
@@ -64,10 +68,15 @@ main { flex: 1; display: flex; min-height: 0; position: relative; }
   font-size: 12px; line-height: 1; cursor: pointer;
 }
 #dock .dock-corner:hover { color: var(--ng-fg, #fff); }
+/* The panel surface itself (excludes the transparent margin strip and the tab). */
+#dockBody {
+  flex: 1; overflow-y: auto;
+  border-left: 1px solid var(--ng-node-border);
+  background: var(--ng-node-bg);
+}
 /* Collapsed dock: no panel surface at all — only the tab sticks out. */
-#dock.collapsed { width: 0; border-left: none; background: transparent; }
+#dock.collapsed { width: 0; }
 #dock.collapsed #dockBody { display: none; }
-#dockBody { flex: 1; overflow-y: auto; }
 #dock h2 { font-size: 13px; font-weight: 600; margin: 0 0 4px; }
 #dock h3 {
   font-size: 11px; font-weight: 600; margin: 14px 0 6px;
@@ -187,20 +196,25 @@ main.table-max { flex: none; height: 0; overflow: hidden; }
 .ng-btn-spin { animation: ng-spin 0.8s linear infinite; transform-box: fill-box; transform-origin: center; }
 @keyframes ng-spin { to { transform: rotate(360deg); } }
 
-/* Toast — non-blocking feedback (e.g. "Refresh queued"). */
+/* Toast — non-blocking feedback (e.g. "Refresh queued"). Sits just above the
+   nodes table footer (the bottom of the canvas/dock area), never over the table
+   itself; when the dock is open the JS adds .toast-dock and an inline left to
+   float it over the panel. Kept compact so it never covers the breadcrumb. */
 #sm-toast {
   position: fixed;
-  bottom: 196px; /* just above the 180px table footer + a little gap */
+  bottom: calc(180px + 12px);
   left: 50%;
   transform: translateX(-50%);
-  z-index: 100;
-  max-width: 80vw;
-  padding: 8px 16px;
+  z-index: 200;
+  max-width: min(80vw, 360px);
+  padding: 7px 14px;
   border-radius: 6px;
   border: 1px solid var(--ng-node-border);
   background: var(--ng-node-bg);
   color: var(--ng-text);
   box-shadow: 0 4px 16px #00000033;
   font: 12px system-ui, sans-serif;
+  text-align: center;
 }
+#sm-toast.toast-dock { max-width: calc(var(--dock-w) - 32px); }
 #sm-toast.error { border-color: var(--ng-danger); color: var(--ng-danger); }

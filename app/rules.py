@@ -18,7 +18,35 @@ from .parser import ParsedValue
 # Operators that do not require a comparison value.
 _NO_VALUE_OPS = {"missing", "present"}
 
-OPS = ["gt", "lt", "gte", "lte", "eq", "ne", "contains", "regex", "missing", "present"]
+OPS = ["gt", "lt", "gte", "lte", "eq", "ne", "contains", "regex", "missing", "present",
+       "is", "is_not", "between"]
+
+# Words interpreted as boolean ``True`` by the ``is``/``is_not`` operators.
+_TRUE_WORDS = {"1", "true", "yes", "on", "up", "ok"}
+
+
+def _as_bool(text: str) -> bool | None:
+    """Normalise *text* to a tri-state boolean, or None if not recognisable."""
+    low = (text or "").strip().lower()
+    if low in _TRUE_WORDS:
+        return True
+    if low in ("0", "false", "no", "off", "down"):
+        return False
+    return None
+
+
+def _parse_range(compare: str) -> tuple[float | None, float | None]:
+    """Parse a ``min,max`` range string into two floats (either may be None)."""
+    parts = (compare or "").split(",")
+    if len(parts) != 2:
+        return None, None
+    out: list[float | None] = []
+    for p in parts:
+        try:
+            out.append(float(p.strip()))
+        except (TypeError, ValueError):
+            out.append(None)
+    return out[0], out[1]
 
 
 @dataclass
@@ -75,6 +103,19 @@ def rule_matches(rule: RuleRow, value: ParsedValue) -> bool:
             return re.search(rule.value, text) is not None
         except re.error:
             return False
+    if op in ("is", "is_not"):
+        want = _as_bool(rule.value)
+        got = _as_bool(text)
+        if got is None and num is not None:
+            got = num != 0
+        if want is None or got is None:
+            return False
+        return got == want if op == "is" else got != want
+    if op == "between":
+        lo, hi = _parse_range(rule.value)
+        if num is None or lo is None or hi is None:
+            return False
+        return lo <= num <= hi
     return False
 
 
