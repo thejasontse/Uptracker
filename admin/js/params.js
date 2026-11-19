@@ -176,3 +176,12 @@ export function attachParamAutocomplete(field, onPick) {
     else if (e.key === 'Escape') { e.preventDefault(); close(); }
   });
 }
+
+// The [Param] names in *names* that have no non-blank value in the merged map
+// (node-derived + user-entered). Returns [] when every token is filled. Used by
+// the Metrics and Rules dry-runs so an empty value can't silently resolve to a
+// blank/literal token — mirrors editor.js validateParams().
+export function missingParams(names, node, paramValues) {
+  const values = paramValueMap(node, paramValues);
+  return names.filter((n) => !String(values[n.toLowerCase()] ?? '').trim());
+}

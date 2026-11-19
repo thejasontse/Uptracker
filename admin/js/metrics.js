@@ -6,7 +6,7 @@ import { api } from './api.js';
 import { state } from './state.js';
 import { breadcrumb, esc, toast } from './util.js';
 import {
-  scanParams, paramValueMap, substituteParams,
+  scanParams, paramValueMap, substituteParams, missingParams,
   paintParamFields, attachParamAutocomplete,
 } from './params.js';
 
@@ -171,6 +171,14 @@ function renderMetrics() {
 
 async function testRun() {
   const out = document.getElementById('testOut');
+  // Block a dry-run when any [Param] token is blank — otherwise the server
+  // substitutes an empty string and the command runs with a missing value.
+  const missing = missingParams(draftParamNames(), nodeRef, paramValues);
+  if (missing.length) {
+    toast('Fill parameter' + (missing.length > 1 ? 's' : '') + ': ' + missing.join(', '), 'error');
+    refreshParams();
+    return;
+  }
   out.textContent = 'running…';
   // The dry-run endpoint resolves [Param] tokens server-side (node-derived
   // params + the values entered here), so send the raw script/regex as stored.

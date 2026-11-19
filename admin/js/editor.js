@@ -8,7 +8,7 @@ import { api } from './api.js';
 import { state } from './state.js';
 import { breadcrumb, esc, toast } from './util.js';
 import {
-  scanParams, paramValueMap, substituteParams, renderMustaches,
+  scanParams, paramValueMap, renderMustaches,
   paintParamFields, attachParamAutocomplete,
 } from './params.js';
 
@@ -29,21 +29,6 @@ function draftParamNames() {
     for (const r of m.rules || []) texts.push(r.value);
   }
   return scanParams(texts);
-}
-
-// Deep copy of the draft with every [Param] token replaced by its value. Used
-// only for local dry-runs (Test run) — persisted data keeps the raw tokens.
-function resolveDraft(d, values) {
-  const out = JSON.parse(JSON.stringify(d));
-  out.name = substituteParams(out.name, values);
-  out.script = substituteParams(out.script, values);
-  for (const m of out.metrics) {
-    m.name = substituteParams(m.name, values);
-    m.regex = substituteParams(m.regex, values);
-    m.unit = substituteParams(m.unit, values);
-    for (const r of m.rules) r.value = substituteParams(r.value, values);
-  }
-  return out;
 }
 
 export function renderDatasetEditor(body, node, ds, ctx) {
@@ -218,15 +203,17 @@ function paramValuesPayload() {
 async function testRun() {
   const out = document.getElementById('testOut');
   const box = document.getElementById('testResult');
-  const values = validateParams();
-  if (!values) return;
-  const run = resolveDraft(draft, values);
+  if (!validateParams()) return;
   out.textContent = 'running…';
+  // The dry-run endpoint resolves [Param] tokens server-side (node-derived
+  // params + the saved values), so send the raw script/regex as stored — the
+  // same canonical path the Metrics and Rules pages use.
   try {
     const res = await api.testRun({
-      method: run.method, script: run.script, timeout_s: run.timeout_s,
-      credential_id: run.credential_id, secret: run.secret,
-      metrics: run.metrics.map((m) => ({ name: m.name, regex: m.regex, group_index: m.group_index, cast: m.cast })),
+      method: draft.method, script: draft.script, timeout_s: draft.timeout_s,
+      credential_id: draft.credential_id, secret: draft.secret,
+      node_id: editorNode ? editorNode.id : state.selectedId, param_values: paramValues,
+      metrics: (draft.metrics || []).map((m) => ({ name: m.name, regex: m.regex, group_index: m.group_index, cast: m.cast })),
     });
     out.innerHTML = res.ok ? '<span class="ok">ok</span>' : `<span class="err">${esc(res.error || 'failed')}</span>`;
     box.innerHTML = `<pre class="out">${esc(res.raw || '(no output)')}</pre>`;

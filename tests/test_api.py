@@ -825,3 +825,48 @@ def test_collect_resolves_node_param_tokens(client):
         "name": "host", "regex": r"host=(\S+)", "cast": "text"}).json()
     res = client.post(f"/api/datasets/{ds['id']}/run").json()
     assert res["metrics"][0]["txt"] == "web-7"
+
+
+def test_manual_run_resolves_saved_custom_param(client):
+    # Bug: a [Param] token was evaluated literally (kept as "[label]") on a
+    # manual run outside the dataset view. A saved custom param_values entry
+    # must resolve at execution time, and no literal token may survive.
+    _mk_node(client, node_id="n1", label="web01")
+    ds = client.post("/api/nodes/n1/datasets", json={
+        "name": "ping", "method": "bash", "script": "echo ping -c1 [Target]",
+        "param_values": {"Target": "10.0.0.5"}}).json()
+    m = client.post(f"/api/datasets/{ds['id']}/metrics", json={
+        "name": "tgt", "regex": r"-c1 (\S+)", "cast": "text"}).json()
+    res = client.post(f"/api/datasets/{ds['id']}/run").json()
+    assert res["ok"]
+    assert "[Target]" not in res["raw"]
+    assert "ping -c1 10.0.0.5" in res["raw"]
+    assert res["metrics"][0]["txt"] == "10.0.0.5"
+
+
+def test_manual_run_saved_param_overrides_node(client):
+    # A saved custom value overrides the node-derived known param of the same
+    # name (here [label]), and the literal token never reaches the script.
+    _mk_node(client, node_id="n1", label="web01")
+    ds = client.post("/api/nodes/n1/datasets", json={
+        "name": "ovr", "method": "bash", "script": "echo name=[label]",
+        "param_values": {"label": "override-host"}}).json()
+    m = client.post(f"/api/datasets/{ds['id']}/metrics", json={
+        "name": "nm", "regex": r"name=(\S+)", "cast": "text"}).json()
+    res = client.post(f"/api/datasets/{ds['id']}/run").json()
+    assert "[label]" not in res["raw"]
+    assert res["metrics"][0]["txt"] == "override-host"
+
+
+def test_test_run_resolves_saved_custom_param(client):
+    # The dry-run (used by the Metrics and Rules dock pages) resolves a custom
+    # param_values entry too, with no literal token left in the raw output.
+    _mk_node(client, node_id="n1", label="web01")
+    res = client.post("/api/test/run", json={
+        "method": "bash", "script": "echo ping -c1 [Target]", "node_id": "n1",
+        "param_values": {"Target": "10.0.0.9"},
+        "metrics": [{"name": "tgt", "regex": r"-c1 (\S+)", "group_index": 1, "cast": "str"}],
+    }).json()
+    assert res["ok"]
+    assert "[Target]" not in res["raw"]
+    assert res["parsed"][0]["txt"] == "10.0.0.9"

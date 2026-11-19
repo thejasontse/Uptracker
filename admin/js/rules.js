@@ -7,7 +7,7 @@ import { api } from './api.js';
 import { state } from './state.js';
 import { breadcrumb, esc, toast, RULE_STATUSES } from './util.js';
 import {
-  scanParams, paramValueMap,
+  scanParams, paramValueMap, missingParams,
   paintParamFields, attachParamAutocomplete,
 } from './params.js';
 
@@ -276,6 +276,14 @@ async function save() {
 async function testRules() {
   const out = document.getElementById('rulesTestOut');
   if (!out) return;
+  // Block the dry-run when any [Param] token is blank — otherwise the server
+  // substitutes an empty string and the command runs with a missing value.
+  const missing = missingParams(testParamNames(), nodeRef, paramValues);
+  if (missing.length) {
+    toast('Fill parameter' + (missing.length > 1 ? 's' : '') + ': ' + missing.join(', '), 'error');
+    refreshParams();
+    return;
+  }
   out.textContent = 'Running…';
   try {
     const pvals = paramValueMap(nodeRef, paramValues);
