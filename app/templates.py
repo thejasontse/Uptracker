@@ -128,6 +128,25 @@ def render_params(text: str, values: dict) -> str:
     return _PARAM.sub(_sub, text)
 
 
+def strip_self_referential(values: dict) -> dict:
+    """Drop entries whose value is the bracketed token naming themselves.
+
+    A saved value like ``{"label": "[label]"}`` — usually created by typing a
+    token into a parameter field and saving — would shadow the node-derived
+    value with the literal text ``[label]``, so the resolved script still
+    contains ``[label]`` (e.g. ``ping [label]`` failing on Windows). Such an
+    entry can never substitute anything useful, so it is ignored and any real
+    value for that key (typically the node's own field) wins."""
+
+    def _self_ref(k: object, v: object) -> bool:
+        if v is None:
+            return False
+        m = _PARAM.fullmatch(str(v).strip())
+        return bool(m and m.group(1).strip().lower() == str(k).strip().lower())
+
+    return {k: v for k, v in (values or {}).items() if not _self_ref(k, v)}
+
+
 def _dataset_param_texts(payload: dict) -> list[str]:
     """All template strings in a dataset payload that may contain ``[Param]`` tokens."""
     texts: list[str] = [payload.get("name", ""), payload.get("script", "")]

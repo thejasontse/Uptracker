@@ -556,7 +556,7 @@ def test_run(body: TestRunBody) -> dict:
             node = conn.execute("SELECT * FROM nodes WHERE id=?", (body.node_id,)).fetchone()
         if node is not None:
             pvals.update(tpl.known_params(node))
-    for k, v in (body.param_values or {}).items():
+    for k, v in tpl.strip_self_referential(body.param_values or {}).items():
         pvals[str(k).lower()] = "" if v is None else str(v)
 
     script = tpl.render_params(body.script, pvals)

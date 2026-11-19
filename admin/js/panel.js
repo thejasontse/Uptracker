@@ -144,8 +144,8 @@ function datasetCard(d) {
     <div class="head">
       <span class="t">${esc(d.name)}</span>
       <button class="small" data-act="run" data-ds="${d.id}">Run</button>
-      <button class="small" data-act="metrics" data-ds="${d.id}">Metrics</button>
       <button class="small" data-act="edit" data-ds="${d.id}">Edit</button>
+      <button class="small" data-act="metrics" data-ds="${d.id}">Metrics</button>
       <button class="small danger" data-act="delDs" data-ds="${d.id}">×</button>
     </div>
     ${readings ? `<div class="readings">${readings}</div>` : ''}

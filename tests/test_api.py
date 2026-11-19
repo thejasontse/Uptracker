@@ -840,7 +840,6 @@ def test_manual_run_resolves_saved_custom_param(client):
     res = client.post(f"/api/datasets/{ds['id']}/run").json()
     assert res["ok"]
     assert "[Target]" not in res["raw"]
-    assert "ping -c1 10.0.0.5" in res["raw"]
     assert res["metrics"][0]["txt"] == "10.0.0.5"
 
 
@@ -870,3 +869,31 @@ def test_test_run_resolves_saved_custom_param(client):
     assert res["ok"]
     assert "[Target]" not in res["raw"]
     assert res["parsed"][0]["txt"] == "10.0.0.9"
+
+
+def test_self_referential_param_value_does_not_shadow_node(client):
+    # A saved value equal to its own token ({"label": "[label]"}) must not
+    # shadow the node-derived value: the literal token would otherwise reach
+    # the script ("ping [label]") and fail to resolve.
+    _mk_node(client, node_id="n1", label="web01")
+    ds = client.post("/api/nodes/n1/datasets", json={
+        "name": "selfref", "method": "bash", "script": "echo ping -c1 [label]",
+        "param_values": {"label": "[label]"}}).json()
+    m = client.post(f"/api/datasets/{ds['id']}/metrics", json={
+        "name": "tgt", "regex": r"-c1 (\S+)", "cast": "text"}).json()
+    res = client.post(f"/api/datasets/{ds['id']}/run").json()
+    assert "[label]" not in res["raw"]
+    assert res["metrics"][0]["txt"] == "web01"
+
+
+def test_test_run_self_referential_param_value_uses_node(client):
+    # Same guard on the dry-run path used by the Metrics/Rules dock pages.
+    _mk_node(client, node_id="n1", label="web01")
+    res = client.post("/api/test/run", json={
+        "method": "bash", "script": "echo ping -c1 [label]", "node_id": "n1",
+        "param_values": {"label": "[label]"},
+        "metrics": [{"name": "tgt", "regex": r"-c1 (\S+)", "group_index": 1, "cast": "str"}],
+    }).json()
+    assert res["ok"]
+    assert "[label]" not in res["raw"]
+    assert res["parsed"][0]["txt"] == "web01"

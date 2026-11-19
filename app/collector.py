@@ -95,7 +95,10 @@ def _param_values(conn: sqlite3.Connection, ds) -> dict[str, str]:
     if isinstance(saved, dict):
         # ``render_params`` looks tokens up by lower-cased name, so store the
         # saved overrides under a lower-cased key too (known_params already is).
-        for k, v in saved.items():
+        # Self-referential entries (a value equal to its own ``[Token]``, e.g.
+        # {"label": "[label]"}) are dropped: they would shadow the node-derived
+        # value with the literal token, leaving e.g. "ping [label]" unresolved.
+        for k, v in templates.strip_self_referential(saved).items():
             vals[str(k).lower()] = "" if v is None else str(v)
     return vals
 
