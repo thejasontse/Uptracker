@@ -6,7 +6,7 @@ Endpoints (all JSON):
   statuses, latest metric values, status levels).
 * ``PUT  /api/graph``               — persist the nodegraph layout; node rows
   are synced (created/pruned) against the model.
-* ``PATCH/DELETE /api/nodes/{id}``  — node metadata + tracking opt-in.
+* ``PATCH/DELETE /api/nodes/{id}``  — node metadata (network path/resource).
 * datasets / metrics / rules / alerts CRUD.
 * ``POST /api/datasets/{id}/run``   — force a collection now.
 * ``POST /api/test/run``            — dry-run a draft dataset (no persistence).
@@ -333,7 +333,7 @@ def _batched_snapshot(conn, levels: dict[int, dict]) -> list[dict]:
     for n in nodes_rows:
         out.append({
             "id": n["id"], "label": n["label"], "network_resource": n["network_resource"],
-            "network_path": n["network_path"], "tracking": bool(n["tracking"]),
+            "network_path": n["network_path"],
             "status": _status_of(conn, n["status_level_id"], levels),
             "status_updated_at": n["status_updated_at"],
             "datasets": [build_dataset(d) for d in ds_by_node.get(n["id"], [])],
@@ -380,7 +380,6 @@ def put_graph(body: GraphBody) -> dict:
 class NodePatch(BaseModel):
     network_resource: str | None = None
     network_path: str | None = None
-    tracking: bool | None = None
 
 
 @app.patch("/api/nodes/{node_id}")
@@ -392,14 +391,9 @@ def patch_node(node_id: str, body: NodePatch) -> dict:
             fields.append("network_resource=?"); vals.append(body.network_resource)
         if body.network_path is not None:
             fields.append("network_path=?"); vals.append(body.network_path)
-        if body.tracking is not None:
-            fields.append("tracking=?"); vals.append(1 if body.tracking else 0)
         if fields:
             fields.append("updated_at=?"); vals.append(db.now_iso())
             conn.execute(f"UPDATE nodes SET {', '.join(fields)} WHERE id=?", (*vals, node_id))
-        if body.tracking is not None:
-            # Kick scheduling immediately when tracking is enabled.
-            conn.execute("UPDATE datasets SET next_run_at=? WHERE node_id=? AND enabled=1", (db.now_iso(), node_id))
     return {"ok": True}
 
 

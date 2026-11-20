@@ -2,7 +2,7 @@
 
 The admin query bar and the dashboard "Views" run user-authored SQL against a
 per-request TEMP table ``nodes_wide`` — one row per node with the columns shown
-in the table (id, label, network_resource, network_path, tracking, status,
+in the table (id, label, network_resource, network_path, status,
 datasets) PLUS one column per distinct metric name (case-insensitive; a node
 that lacks a metric shows ``'N/A'``).
 
@@ -109,7 +109,7 @@ def _build_wide(conn: sqlite3.Connection) -> list[str]:
     the ordered list of column names exposed to the user query."""
     metrics = _metric_columns(conn)
     cols = ["id", "node_id", "label", "network_resource", "network_path",
-            "tracking", "status", "datasets"] + [disp for _, disp in metrics]
+            "status", "datasets"] + [disp for _, disp in metrics]
 
     coldefs = [
         "id TEXT PRIMARY KEY",
@@ -117,7 +117,6 @@ def _build_wide(conn: sqlite3.Connection) -> list[str]:
         "label TEXT",
         "network_resource TEXT",
         "network_path TEXT",
-        "tracking INTEGER",
         "status TEXT",
         "datasets INTEGER",
     ] + [f"{_q(disp)} TEXT DEFAULT 'N/A'" for _, disp in metrics]
@@ -127,8 +126,8 @@ def _build_wide(conn: sqlite3.Connection) -> list[str]:
     conn.execute(
         """
         INSERT INTO nodes_wide
-            (id, node_id, label, network_resource, network_path, tracking, status, datasets)
-        SELECT n.id, n.id, n.label, n.network_resource, n.network_path, n.tracking,
+            (id, node_id, label, network_resource, network_path, status, datasets)
+        SELECT n.id, n.id, n.label, n.network_resource, n.network_path,
                COALESCE(sl.name, 'unknown'),
                (SELECT COUNT(*) FROM datasets d WHERE d.node_id = n.id)
         FROM nodes n

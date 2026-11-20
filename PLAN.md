@@ -6,11 +6,11 @@
 - [x] `admin/js/rules.js:134` same
 
 ## M2 — Rename "Network-Path Reference" → "Network Path"
-- [ ] UI label in `admin/js/panel.js:112`
-- [ ] Collapse `NETWORK_PATH_HINTS` to single placeholder in `admin/js/util.js`; update panel.js reference
-- [ ] Param token rename `[Network-Path Reference]` → `[Network Path]` in `app/templates.py`, `admin/js/params.js`, `app/db.py` `_KNOWN_PARAM_KEYS`
-- [ ] Migration `migrate_rename_network_path_token()` in `app/db.py` rewriting scripts, alert bodies, template payloads, and saved param_values keys
-- [ ] Update tests in `test_logic.py` and `test_api.py`
+- [x] UI label in `admin/js/panel.js:112`
+- [x] Collapse `NETWORK_PATH_HINTS` to single placeholder in `admin/js/util.js`; update panel.js reference
+- [x] Param token rename `[Network-Path Reference]` → `[Network Path]` in `app/templates.py`, `admin/js/params.js`, `app/db.py` `_KNOWN_PARAM_KEYS`
+- [x] Migration `migrate_rename_network_path_token()` in `app/db.py` rewriting scripts, alert bodies, template payloads, and saved param_values keys
+- [x] Update tests in `test_logic.py` and `test_api.py`
 
 ## M3 — Drop per-node "Tracking enabled"
 - [ ] Remove checkbox + handler from `admin/js/panel.js`

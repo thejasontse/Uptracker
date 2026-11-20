@@ -211,11 +211,11 @@ def test_template_apply_missing_params(client):
 
 
 # ---------------- node patch ----------------
-def test_node_patch_and_tracking(client):
+def test_node_patch_metadata(client):
     _mk_node(client)
-    client.patch("/api/nodes/n1", json={"network_resource": "dns", "network_path": "ns1.example.com", "tracking": True})
+    client.patch("/api/nodes/n1", json={"network_resource": "dns", "network_path": "ns1.example.com"})
     n = client.get("/api/snapshot").json()["nodes"][0]
-    assert n["network_resource"] == "dns" and n["network_path"] == "ns1.example.com" and n["tracking"] is True
+    assert n["network_resource"] == "dns" and n["network_path"] == "ns1.example.com"
 
 
 # ---------------- network resources ----------------
@@ -659,7 +659,7 @@ def test_query_columns_lists_node_fields_and_metrics(client):
     _mk_node(client)
     _seed_metric(client, metric="cpu")
     cols = client.get("/api/query/columns").json()["columns"]
-    for c in ("id", "label", "network_resource", "network_path", "tracking", "status", "datasets"):
+    for c in ("id", "label", "network_resource", "network_path", "status", "datasets"):
         assert c in cols
     assert "cpu" in cols
 

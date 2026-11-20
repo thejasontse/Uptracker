@@ -111,7 +111,6 @@ function nodeHtml(n) {
     <select id="resourceSel">${resourceOpts}</select>
     <label class="f">Network Path</label>
     <div class="row"><input id="pathIn" value="${esc(n.network_path)}" placeholder="${esc(NETWORK_PATH_PLACEHOLDER)}"><button id="pathSave" class="small">Save</button></div>
-    <div class="row"><label class="toggle"><input type="checkbox" id="trackChk" ${n.tracking ? 'checked' : ''}> Tracking enabled</label></div>
     <div class="row">
       <button data-act="addDs" class="primary small">+ Dataset</button>
       <button data-act="templates" class="small">Add dataset from templates</button>
@@ -226,7 +225,6 @@ async function onDockChange(e) {
     await api.patchNode(node.id, { network_resource: e.target.value });
     await refresh();
   }
-  if (e.target.id === 'trackChk') { await api.patchNode(node.id, { tracking: e.target.checked }); await refresh(); }
 }
 
 export async function refresh() {

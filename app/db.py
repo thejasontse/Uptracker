@@ -230,6 +230,7 @@ def init_db() -> None:
         migrate_dataset_last_output(conn)
         migrate_alert_trigger_count(conn)
         migrate_rename_network_path_token(conn)
+        migrate_drop_node_tracking(conn)
         row = conn.execute("SELECT json FROM graph_model WHERE id=1").fetchone()
         if row is None:
             conn.execute(
@@ -362,6 +363,16 @@ def _rewrite_text_tree(obj, old: str, new: str):
     if isinstance(obj, str):
         return obj.replace(old, new)
     return obj
+
+
+def migrate_drop_node_tracking(conn: sqlite3.Connection) -> None:
+    """Drop the legacy ``nodes.tracking`` column. It was a per-node opt-in flag
+    that only kicked scheduling on PATCH; the global Scheduler setting plus each
+    dataset's own ``enabled`` field cover the same need, so the column is now
+    unused. Idempotent — no-op if already dropped."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(nodes)")}
+    if "tracking" in cols:
+        conn.execute("ALTER TABLE nodes DROP COLUMN tracking")
 
 
 def migrate_alert_trigger_count(conn: sqlite3.Connection) -> None:
@@ -842,9 +853,9 @@ def _seed_demo(conn: sqlite3.Connection) -> None:
     node_id = "localhost"
     now = now_iso()
     conn.execute(
-        "INSERT INTO nodes (id, label, network_resource, network_path, tracking, "
-        "created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
-        (node_id, "localhost", "server", "localhost", 1, now, now),
+        "INSERT INTO nodes (id, label, network_resource, network_path, "
+        "created_at, updated_at) VALUES (?,?,?,?,?,?)",
+        (node_id, "localhost", "server", "localhost", now, now),
     )
 
     # Add the node to the graph layout so the admin canvas renders it.

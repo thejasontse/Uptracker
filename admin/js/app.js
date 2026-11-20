@@ -385,5 +385,5 @@ boot().catch((e) => {
 });
 
 // Exposed so the panel can ensure a just-added node exists as a DB row before
-// PATCHing it (e.g. enabling tracking on a freshly dropped node).
+// PATCHing it (e.g. updating its network path on a freshly dropped node).
 window.__flushGraph = flushNow;
