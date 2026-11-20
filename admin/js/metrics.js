@@ -9,6 +9,7 @@ import {
   scanParams, paramValueMap, substituteParams, missingParams, customParamValues,
   paintParamFields, attachParamAutocomplete,
 } from './params.js';
+import { showTestResult } from './dockTerminal.js';
 
 let draft = null;        // working copy of the dataset's metrics
 let original = null;     // snapshot metrics at load (for the diff)
@@ -17,7 +18,6 @@ let nodeRef = null;      // the owning node (for [Param] auto-fill)
 let ctx = null;          // { go, onSaved } from the panel router
 let lastTest = null;     // { [metricName]: parsedEntry } from the most recent test run
 let paramValues = {};    // user-entered [Param] values, keyed by display name
-let rawOut = '';         // raw script output shown for regex building (last run / test)
 
 // All [Param] names referenced across the draft: the dataset script plus every
 // metric name/regex/unit. Mirrors the backend scan so a token gets an input.
@@ -25,24 +25,6 @@ function draftParamNames() {
   const texts = [dataset && dataset.script];
   for (const m of draft) texts.push(m.name, m.regex, m.unit);
   return scanParams(texts.filter((t) => typeof t === 'string'));
-}
-
-// The most recent raw output to show for regex building: a fresh test run wins,
-// otherwise the dataset's last persisted collection output.
-function initialRaw() {
-  if (rawOut) return rawOut;
-  return (dataset && dataset.last_output) || '';
-}
-
-function paintRaw() {
-  const box = document.getElementById('rawBox');
-  if (!box) return;
-  const txt = initialRaw();
-  if (!txt) { box.hidden = true; return; }
-  box.hidden = false;
-  const src = rawOut ? 'latest test run' : 'last collected run';
-  box.querySelector('#rawSrc').textContent = src;
-  box.querySelector('#rawPre').textContent = txt;
 }
 
 function refreshParams() {
@@ -62,7 +44,6 @@ export function renderMetricsView(body, node, ds, navCtx) {
   draft = JSON.parse(JSON.stringify(ds.metrics));
   lastTest = null;
   paramValues = ds && ds.param_values ? { ...ds.param_values } : {};
-  rawOut = '';
 
   body.innerHTML = `
   <div class="section">
@@ -79,12 +60,7 @@ export function renderMetricsView(body, node, ds, navCtx) {
       <div id="mpParamFields"></div>
     </div>
     <div class="row"><button id="btnNewMetric" class="small">+ Metric</button>
-      <button id="btnTest" class="small">Test run</button>
-      <span id="testOut" class="muted"></span></div>
-    <div id="rawBox" class="card" hidden>
-      <div class="head"><span class="t">Raw output</span><span id="rawSrc" class="muted"></span></div>
-      <pre id="rawPre" class="out"></pre>
-    </div>
+      <button id="btnTest" class="small">Test run</button></div>
     <div id="metricList"></div>
     <div class="row" style="margin-top:12px">
       <span style="flex:1"></span>
@@ -94,7 +70,6 @@ export function renderMetricsView(body, node, ds, navCtx) {
 
   renderMetrics();
   refreshParams();
-  paintRaw();
   body.querySelector('#btnNewMetric').onclick = () => {
     draft.push({ id: null, name: 'metric', regex: 'value=(\\d+)', group_index: 1, cast: 'auto', unit: '', rules: [], alert: null });
     renderMetrics();
@@ -173,7 +148,6 @@ function renderMetrics() {
 }
 
 async function testRun() {
-  const out = document.getElementById('testOut');
   // Block a dry-run when any [Param] token is blank — otherwise the server
   // substitutes an empty string and the command runs with a missing value.
   const missing = missingParams(draftParamNames(), nodeRef, paramValues);
@@ -182,9 +156,9 @@ async function testRun() {
     refreshParams();
     return;
   }
-  out.textContent = 'running…';
   // The dry-run endpoint resolves [Param] tokens server-side (node-derived
   // params + the values entered here), so send the raw script/regex as stored.
+  // Results go to the fixed terminal at the bottom of the dock.
   try {
     const res = await api.testRun({
       method: dataset.method, script: dataset.script, timeout_s: dataset.timeout_s,
@@ -192,13 +166,13 @@ async function testRun() {
       node_id: nodeRef ? nodeRef.id : state.selectedId, param_values: paramValues,
       metrics: draft.map((m) => ({ name: m.name, regex: m.regex, group_index: m.group_index, cast: m.cast })),
     });
-    out.innerHTML = res.ok ? '<span class="ok">ok</span>' : `<span class="err">${esc(res.error || 'failed')}</span>`;
     lastTest = {};
     for (const p of (res.parsed || [])) lastTest[p.name] = p;
-    rawOut = res.raw || '';
     renderMetrics();
-    paintRaw();
-  } catch (e) { out.textContent = e.message; }
+    showTestResult(res, 'metrics editor');
+  } catch (e) {
+    showTestResult({ ok: false, error: e.message, raw: '', parsed: [] }, 'metrics editor');
+  }
 }
 
 // Diff-sync metric fields between the snapshot and the draft. Rules/alerts are

@@ -11,6 +11,7 @@ import {
   scanParams, paramValueMap, renderMustaches, customParamValues,
   paintParamFields, attachParamAutocomplete,
 } from './params.js';
+import { showTestResult } from './dockTerminal.js';
 
 const METHODS = ['bash', 'cmd', 'powershell'];
 
@@ -67,9 +68,7 @@ export function renderDatasetEditor(body, node, ds, ctx) {
       <div style="flex:1"><label class="f">Credential</label><select id="dsCred"></select></div>
       <div style="flex:1"><label class="f">Secret</label><input id="dsSecret" type="password" placeholder="re-enter to save" autocomplete="new-password"></div>
     </div>
-    <div class="row"><button id="btnTest" class="small">Test run</button>
-      <span id="testOut" class="muted"></span></div>
-    <div id="testResult"></div>
+    <div class="row"><button id="btnTest" class="small">Test run</button></div>
     <div class="row" style="margin-top:12px">
       <button id="btnTpl" class="small">Save as template</button>
       <span style="flex:1"></span>
@@ -198,13 +197,11 @@ function paramValuesPayload() {
 }
 
 async function testRun() {
-  const out = document.getElementById('testOut');
-  const box = document.getElementById('testResult');
   if (!validateParams()) return;
-  out.textContent = 'running…';
   // The dry-run endpoint resolves [Param] tokens server-side (node-derived
   // params + the saved values), so send the raw script/regex as stored — the
-  // same canonical path the Metrics and Rules pages use.
+  // same canonical path the Metrics and Rules pages use. Results go to the
+  // fixed terminal at the bottom of the dock.
   try {
     const res = await api.testRun({
       method: draft.method, script: draft.script, timeout_s: draft.timeout_s,
@@ -212,9 +209,10 @@ async function testRun() {
       node_id: editorNode ? editorNode.id : state.selectedId, param_values: paramValues,
       metrics: (draft.metrics || []).map((m) => ({ name: m.name, regex: m.regex, group_index: m.group_index, cast: m.cast })),
     });
-    out.innerHTML = res.ok ? '<span class="ok">ok</span>' : `<span class="err">${esc(res.error || 'failed')}</span>`;
-    box.innerHTML = `<pre class="out">${esc(res.raw || '(no output)')}</pre>`;
-  } catch (e) { out.textContent = e.message; }
+    showTestResult(res, 'dataset editor');
+  } catch (e) {
+    showTestResult({ ok: false, error: e.message, raw: '', parsed: [] }, 'dataset editor');
+  }
 }
 
 // Save the dataset. The stored name/script keep their [Param] tokens; the

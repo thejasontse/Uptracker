@@ -10,6 +10,7 @@ import {
   scanParams, paramValueMap, missingParams,
   paintParamFields, attachParamAutocomplete,
 } from './params.js';
+import { showTestResult } from './dockTerminal.js';
 
 const OPS = [
   ['gt', '>'], ['lt', '<'], ['gte', '≥'], ['lte', '≤'], ['eq', '='], ['ne', '≠'],
@@ -135,8 +136,7 @@ export function renderRulesView(body, node, ds, metricRow, navCtx) {
       <div id="rpParamFields"></div>
     </div>
     <div class="row"><button id="btnAddRule" class="small">+ Rule</button>
-      <button id="btnTestRules" class="small">Test rules</button>
-      <span id="rulesTestOut" class="muted"></span></div>
+      <button id="btnTestRules" class="small">Test rules</button></div>
     <div class="rule-grid rule-head"><span>When</span><span>Value</span><span></span><span>Status</span><span></span></div>
     <div id="ruleList"></div>
     <div id="alertBox"></div>
@@ -271,11 +271,9 @@ async function save() {
 }
 
 // Run the dataset script once and evaluate every draft rule against the parsed
-// value, showing each rule's result. Reuses /api/test/run with the raw regex +
-// [Param] values so it matches what collection would do.
+// value, showing each rule's result in the bottom terminal. Reuses /api/test/run
+// with the raw regex + [Param] values so it matches what collection would do.
 async function testRules() {
-  const out = document.getElementById('rulesTestOut');
-  if (!out) return;
   // Block the dry-run when any [Param] token is blank — otherwise the server
   // substitutes an empty string and the command runs with a missing value.
   const missing = missingParams(testParamNames(), nodeRef, paramValues);
@@ -284,7 +282,6 @@ async function testRules() {
     refreshParams();
     return;
   }
-  out.textContent = 'Running…';
   try {
     const pvals = paramValueMap(nodeRef, paramValues);
     const res = await api.testRun({
@@ -297,8 +294,7 @@ async function testRules() {
     });
     lastTest = res;
     const entry = (res.parsed || [])[0] || {};
-    if (entry.error) { out.textContent = 'Parse error: ' + entry.error; return; }
-    const shown = `value ${entry.raw != null ? entry.raw : '(none)'}`;
+    if (entry.error) { showTestResult(res, 'rules editor'); return; }
     // Evaluate each rule and report which fire, plus the resulting status.
     const fired = [];
     for (const r of draft.rules) {
@@ -311,6 +307,9 @@ async function testRules() {
     let result = 'unknown';
     const order = { unknown: 0, good: 1, warning: 2, critical: 3 };
     for (const f of fired) if ((order[f] ?? 0) > (order[result] ?? 0)) result = f;
-    out.textContent = `${shown} → ${fired.length ? 'matched ' + fired.join(', ') : 'no rule matched'} · status: ${result}`;
-  } catch (e) { out.textContent = ''; toast(e.message, 'error'); }
+    const summary = `${fired.length ? 'matched ' + fired.join(', ') : 'no rule matched'} · status: ${result}`;
+    showTestResult({ ...res, error: res.ok ? null : res.error, raw: (res.raw || '') + '\n— rules —\n' + summary }, 'rules editor');
+  } catch (e) {
+    showTestResult({ ok: false, error: e.message, raw: '', parsed: [] }, 'rules editor');
+  }
 }

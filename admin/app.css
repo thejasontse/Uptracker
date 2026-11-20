@@ -73,6 +73,26 @@ main { flex: 1; display: flex; min-height: 0; position: relative; }
 /* Collapsed dock: no panel surface at all — only the tab sticks out. */
 #dock.collapsed { width: 0; }
 #dock.collapsed #dockBody { display: none; }
+#dock.collapsed #dockTerminal { display: none; }
+
+/* Fixed terminal at the bottom of the docked panel. Always 180px tall so the
+   editor above has a stable layout; hidden via [hidden] outside the
+   dataset/metrics/rules pages. Reuses the pre.out palette for raw output. */
+#dockTerminal {
+  flex: none; height: 180px; display: flex; flex-direction: column;
+  border-top: 1px solid var(--ng-node-border);
+  background: var(--ng-node-bg);
+}
+.term-header {
+  flex: none; padding: 4px 8px; font-size: 10px; color: var(--ng-muted);
+  background: var(--ng-header-bg); border-bottom: 1px solid var(--ng-node-border);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#dockTerminalRaw { flex: 1; min-height: 0; max-height: none; margin: 8px; }
+#dockTerminalParsed { flex: none; padding: 0 8px 8px; font-size: 11px; }
+.term-parsed { width: 100%; border-collapse: collapse; }
+.term-parsed th, .term-parsed td { text-align: left; padding: 2px 6px; font-weight: normal; }
+.term-parsed th { color: var(--ng-muted); font-size: 10px; }
 
 /* Folder tabs — the home view's primary navigation (settings/credentials/
    import/export). The active tab shares the content surface's background and

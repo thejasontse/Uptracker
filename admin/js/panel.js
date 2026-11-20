@@ -12,9 +12,14 @@ import { renderTemplatesView } from './templates.js';
 import { renderCredentialsView } from './credentials.js';
 import { renderSettingsView } from './settings.js';
 import { renderImportView, renderExportView } from './importexport.js';
+import { setVisible as setTerminalVisible, clearTerminal } from './dockTerminal.js';
 
 let route = { view: 'home' };
 let homeTab = 'settings';
+
+// Editor pages that own the bottom terminal. Other views (home tabs, node
+// detail, templates) hide it entirely.
+const EDITOR_VIEWS = new Set(['dataset', 'metrics', 'rules']);
 
 const HOME_TABS = [
   { id: 'settings', label: 'Settings' },
@@ -41,6 +46,10 @@ export function initPanel() {
 
 function render() {
   const body = document.getElementById('dockBody');
+  // Terminal visibility follows the route: only editor pages show it, and any
+  // page change wipes its contents so a stale test result never lingers.
+  setTerminalVisible(EDITOR_VIEWS.has(route.view));
+  clearTerminal();
   switch (route.view) {
     case 'dataset': {
       const found = route.dsId ? findDataset(route.dsId) : null;

@@ -29,13 +29,13 @@
 - [x] Tests: delete resource tests, fix INSERT statements in test_logic.py and test_api.py
 
 ## M5 — Fixed terminal section at bottom of docked panel
-- [ ] Add `<div id="dockTerminal">` sibling to `#dockBody` in `admin/index.html`
-- [ ] CSS in `app.css`: 180px fixed, reuse `pre.out` palette
-- [ ] New module `admin/js/dockTerminal.js` exporting `showTestResult`, `clearTerminal`, `setVisible`
-- [ ] Wire into `panel.js:render()` for visibility + per-page clear
-- [ ] Replace inline output in `editor.js:testRun()`, remove `#testResult` div and `#testOut` span
-- [ ] Replace inline raw box in `metrics.js:testRun()`, remove `#rawBox` card and `paintRaw`/`initialRaw` helpers
-- [ ] Replace inline status in `rules.js:testRules()`
+- [x] Add `<div id="dockTerminal">` sibling to `#dockBody` in `admin/index.html`
+- [x] CSS in `app.css`: 180px fixed, reuse `pre.out` palette
+- [x] New module `admin/js/dockTerminal.js` exporting `showTestResult`, `clearTerminal`, `setVisible`
+- [x] Wire into `panel.js:render()` for visibility + per-page clear
+- [x] Replace inline output in `editor.js:testRun()`, remove `#testResult` div and `#testOut` span
+- [x] Replace inline raw box in `metrics.js:testRun()`, remove `#rawBox` card and `paintRaw`/`initialRaw` helpers
+- [x] Replace inline status in `rules.js:testRules()`
 
 ## Verification Checklist
 - [ ] `pytest tests/` passes after each milestone
