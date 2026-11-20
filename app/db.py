@@ -229,6 +229,7 @@ def init_db() -> None:
         migrate_strip_known_params(conn)
         migrate_dataset_last_output(conn)
         migrate_alert_trigger_count(conn)
+        migrate_rename_network_path_token(conn)
         row = conn.execute("SELECT json FROM graph_model WHERE id=1").fetchone()
         if row is None:
             conn.execute(
@@ -261,14 +262,14 @@ def migrate_dataset_param_values(conn: sqlite3.Connection) -> None:
 # Node-derived [Param] names — mirrored from app.templates.KNOWN_PARAM_KEYS.
 # Duplicated here (rather than imported) because templates.py imports this
 # module, so importing back would be circular.
-_KNOWN_PARAM_KEYS = {"label", "id", "network-path reference", "network resource"}
+_KNOWN_PARAM_KEYS = {"label", "id", "network path", "network resource"}
 
 
 def migrate_strip_known_params(conn: sqlite3.Connection) -> None:
     """Remove node-derived keys from stored dataset ``param_values``.
 
     Older versions of the admin persisted every parameter field — including the
-    node-derived ones (``[label]``, ``[id]``, ``[Network-Path Reference]``, …) —
+    node-derived ones (``[label]``, ``[id]``, ``[Network Path]``, …) —
     into a dataset's ``param_values`` blob. Those saved copies shadowed the live
     node fields at execution time, so a renamed node or changed network path
     kept using the stale value baked in at save time (e.g. ``ping [label]``
@@ -300,6 +301,67 @@ def migrate_dataset_last_output(conn: sqlite3.Connection) -> None:
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(datasets)")}
     if "last_output" not in cols:
         conn.execute("ALTER TABLE datasets ADD COLUMN last_output TEXT")
+
+
+# ``[Network-Path Reference]`` was renamed to ``[Network Path]``. Rewrite stored
+# scripts, alert subjects/bodies, and template payloads (and rename the matching
+# key inside saved ``param_values`` blobs) so existing data keeps resolving.
+_NETWORK_PATH_TOKEN_OLD = "[Network-Path Reference]"
+_NETWORK_PATH_TOKEN_NEW = "[Network Path]"
+
+
+def migrate_rename_network_path_token(conn: sqlite3.Connection) -> None:
+    """Rename the ``[Network-Path Reference]`` parameter token to
+    ``[Network Path]`` across stored dataset scripts, alert subjects/bodies,
+    and template payloads. Also rename the matching lower-cased key inside any
+    saved ``datasets.param_values`` JSON blob. Idempotent — rows without the
+    old token/key are skipped."""
+    for table, cols in (("datasets", ("script",)),
+                        ("alert_configs", ("subject", "body"))):
+        for row in conn.execute(f"SELECT id, {', '.join(cols)} FROM {table}").fetchall():
+            updates = {c: (row[c] or "").replace(_NETWORK_PATH_TOKEN_OLD, _NETWORK_PATH_TOKEN_NEW) for c in cols}
+            if any(updates[c] != row[c] for c in cols):
+                sets = ", ".join(f"{c}=?" for c in cols)
+                conn.execute(f"UPDATE {table} SET {sets} WHERE id=?",
+                             (*[updates[c] for c in cols], row["id"]))
+    for row in conn.execute("SELECT id, payload FROM templates").fetchall():
+        try:
+            payload = json.loads(row["payload"])
+        except (ValueError, TypeError):
+            continue
+        new_payload = _rewrite_text_tree(payload, _NETWORK_PATH_TOKEN_OLD, _NETWORK_PATH_TOKEN_NEW)
+        if new_payload != payload:
+            conn.execute("UPDATE templates SET payload=? WHERE id=?",
+                         [json.dumps(new_payload), row["id"]])
+    for row in conn.execute("SELECT id, param_values FROM datasets").fetchall():
+        try:
+            vals = json.loads(row["param_values"] or "{}")
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(vals, dict):
+            continue
+        renamed: dict = {}
+        changed = False
+        for k, v in vals.items():
+            new_k = _NETWORK_PATH_TOKEN_NEW.strip("[]") if str(k).strip().lower() == "network-path reference" else k
+            if new_k != k:
+                changed = True
+            renamed[new_k] = v
+        if changed:
+            conn.execute("UPDATE datasets SET param_values=? WHERE id=?",
+                         [json.dumps(renamed), row["id"]])
+
+
+def _rewrite_text_tree(obj, old: str, new: str):
+    """Recursively replace ``old`` with ``new`` inside every string of a JSON
+    value. Returns the (possibly new) object."""
+    if isinstance(obj, dict):
+        return {k: _rewrite_text_tree(v, old, new) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_rewrite_text_tree(v, old, new) for v in obj]
+    if isinstance(obj, str):
+        return obj.replace(old, new)
+    return obj
 
 
 def migrate_alert_trigger_count(conn: sqlite3.Connection) -> None:

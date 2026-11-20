@@ -4,7 +4,7 @@
 // on demand (Refresh button) or after a mutation, so in-progress edits are safe.
 import { api } from './api.js';
 import { state } from './state.js';
-import { esc, breadcrumb, networkResourceLabel, NETWORK_PATH_HINTS, toast, formatTimestamp } from './util.js';
+import { esc, breadcrumb, networkResourceLabel, NETWORK_PATH_PLACEHOLDER, toast, formatTimestamp } from './util.js';
 import { renderDatasetEditor } from './editor.js';
 import { renderMetricsView } from './metrics.js';
 import { renderRulesView } from './rules.js';
@@ -109,8 +109,8 @@ function nodeHtml(n) {
     ${breadcrumb([{ label: 'Datasets' }])}
     <label class="f">Network Resource</label>
     <select id="resourceSel">${resourceOpts}</select>
-    <label class="f">Network-Path Reference</label>
-    <div class="row"><input id="pathIn" value="${esc(n.network_path)}" placeholder="${esc(NETWORK_PATH_HINTS[n.network_resource] || '')}"><button id="pathSave" class="small">Save</button></div>
+    <label class="f">Network Path</label>
+    <div class="row"><input id="pathIn" value="${esc(n.network_path)}" placeholder="${esc(NETWORK_PATH_PLACEHOLDER)}"><button id="pathSave" class="small">Save</button></div>
     <div class="row"><label class="toggle"><input type="checkbox" id="trackChk" ${n.tracking ? 'checked' : ''}> Tracking enabled</label></div>
     <div class="row">
       <button data-act="addDs" class="primary small">+ Dataset</button>
@@ -219,10 +219,10 @@ async function onDockChange(e) {
   const node = state.node(state.selectedId);
   if (!node || route.view !== 'node') return;
   if (e.target.id === 'resourceSel') {
-    // Swap the Network-Path placeholder immediately; the PATCH/refresh
+    // Swap the Network Path placeholder immediately; the PATCH/refresh
     // re-renders the panel with the persisted resource type afterwards.
     const pathIn = document.getElementById('pathIn');
-    if (pathIn) pathIn.placeholder = NETWORK_PATH_HINTS[e.target.value] || '';
+    if (pathIn) pathIn.placeholder = NETWORK_PATH_PLACEHOLDER;
     await api.patchNode(node.id, { network_resource: e.target.value });
     await refresh();
   }

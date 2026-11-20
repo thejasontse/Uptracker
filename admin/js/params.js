@@ -9,11 +9,11 @@ export const PARAM_RE_SRC = String.raw`\[(?=[A-Za-z])([A-Za-z0-9 _.\-]+)\]`;
 
 // Known auto-fillable names (lower-cased). Mirrors app/templates.py. The raw
 // DB field names are intentionally NOT parameters — only label/id and the
-// friendly UI labels (network-path reference / network resource) are.
-export const KNOWN_PARAM_KEYS = new Set(['label', 'id', 'network-path reference', 'network resource']);
+// friendly UI labels (network path / network resource) are.
+export const KNOWN_PARAM_KEYS = new Set(['label', 'id', 'network path', 'network resource']);
 
-// Intentional parameters are Title Case ([Host]), multi-word ([Network-Path
-// Reference]), or a known node field. Lower-case single words like [a-z] or
+// Intentional parameters are Title Case ([Host]), multi-word ([Network Path]),
+// or a known node field. Lower-case single words like [a-z] or
 // [0-9] stay literal — keeps regex character classes out of the param fields.
 export function isParamName(name) {
   return KNOWN_PARAM_KEYS.has(name.toLowerCase()) || /^[A-Z]/.test(name) || /\s/.test(name);
@@ -24,7 +24,7 @@ export function paramHints() {
   return [
     { name: 'label', hint: 'node label' },
     { name: 'id', hint: 'node id' },
-    { name: 'Network-Path Reference', hint: "node's network-path reference" },
+    { name: 'Network Path', hint: "node's network path" },
     { name: 'Network Resource', hint: "node's network resource" },
   ];
 }
@@ -43,13 +43,13 @@ export function scanParams(texts) {
   return seen;
 }
 
-// The friendly labels used on the node form, so [Network-Path Reference]
+// The friendly labels used on the node form, so [Network Path]
 // fills from the node's network path (mirrors app/templates.py).
 export function knownParams(node) {
   return {
     label: node.label,
     id: node.id,
-    'network-path reference': node.network_path,
+    'network path': node.network_path,
     'network resource': node.network_resource,
   };
 }
@@ -62,8 +62,8 @@ export function paramValueMap(node, paramValues) {
 }
 
 // The user-entered values to PERSIST, keyed by display name, limited to the
-// tokens in *names*. Node-derived params ([label], [id], [Network-Path
-// Reference], [Network Resource]) are skipped: they always resolve live from the
+// tokens in *names*. Node-derived params ([label], [id], [Network Path],
+// [Network Resource]) are skipped: they always resolve live from the node at
 // node at execution time, so saving a snapshot would shadow the current node
 // value once the node is renamed or its network path changes (e.g. a stale
 // "label" making `ping [label]` target an old name). Only genuine custom tokens

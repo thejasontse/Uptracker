@@ -185,12 +185,12 @@ def test_template_save_and_apply(client):
 def test_template_apply_with_params(client):
     _mk_node(client)
     t = client.post("/api/templates", json={"name": "path-ping", "template_type": "dataset", "payload": {
-        "name": "Ping [Network-Path Reference]", "method": "bash",
-        "script": "ping -c1 [Network-Path Reference]",
+        "name": "Ping [Network Path]", "method": "bash",
+        "script": "ping -c1 [Network Path]",
         "metrics": [{"name": "rtt", "regex": r"time=(\d+)", "group_index": 1,
                      "rules": [{"op": "gt", "value": "[Threshold]", "status_level_id": 3}]}]}}).json()
     r = client.post(f"/api/templates/{t['id']}/apply",
-                    json={"node_id": "n1", "params": {"Network-Path Reference": "db.internal", "Threshold": "50"}})
+                    json={"node_id": "n1", "params": {"Network Path": "db.internal", "Threshold": "50"}})
     assert r.status_code == 200, r.text
     assert r.json()["name"] == "Ping db.internal"
     ds = next(d for d in client.get("/api/snapshot").json()["nodes"][0]["datasets"]
@@ -905,7 +905,7 @@ def test_test_run_self_referential_param_value_uses_node(client):
 # rename (or network-path change) the script kept using the stale value baked in
 # at save time — e.g. "ping [label]" resolving to an old host name. The fix is
 # to never persist node-derived keys: the admin strips them on save and a
-# migration cleans existing rows, so [label] / [Network-Path Reference] always
+# migration cleans existing rows, so [label] / [Network Path] always
 # resolve from the current node. A genuine custom override of the same name is
 # still honoured (it is the only way to target something other than the node).
 
@@ -926,17 +926,17 @@ def test_node_param_token_resolves_live_after_rename(client):
 
 
 def test_network_path_param_resolves_live_after_change(client):
-    # [Network-Path Reference] resolves from the node's current path, not a copy
+    # [Network Path] resolves from the node's current path, not a copy
     # saved earlier.
     _mk_node(client, node_id="n1", label="web01")
     client.patch("/api/nodes/n1", json={"network_path": "10.0.0.1"})
     ds = client.post("/api/nodes/n1/datasets", json={
-        "name": "ping", "method": "bash", "script": "echo ping -c1 [Network-Path Reference]"}).json()
+        "name": "ping", "method": "bash", "script": "echo ping -c1 [Network Path]"}).json()
     m = client.post(f"/api/datasets/{ds['id']}/metrics", json={
         "name": "tgt", "regex": r"-c1 (\S+)", "cast": "text"}).json()
     client.patch("/api/nodes/n1", json={"network_path": "10.0.0.2"})
     res = client.post(f"/api/datasets/{ds['id']}/run").json()
-    assert "[Network-Path Reference]" not in res["raw"]
+    assert "[Network Path]" not in res["raw"]
     assert res["metrics"][0]["txt"] == "10.0.0.2"
 
 

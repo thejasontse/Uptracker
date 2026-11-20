@@ -160,8 +160,8 @@ def test_template_roundtrip_and_apply(data_dir):
 
 # ---------------- [square bracket] parameters ----------------
 def test_extract_params_dedupes_and_keeps_order():
-    names = templates.extract_params("ping [Network-Path Reference]", "echo [Host] [Network-Path Reference] [label]")
-    assert names == ["Network-Path Reference", "Host", "label"]
+    names = templates.extract_params("ping [Network Path]", "echo [Host] [Network Path] [label]")
+    assert names == ["Network Path", "Host", "label"]
 
 
 def test_extract_params_ignores_shell_idioms():
@@ -177,7 +177,7 @@ def test_extract_params_ignores_regex_char_classes():
     assert templates.extract_params(r"time=([0-9.]+)ms") == []
     assert templates.extract_params(r"status=[a-z]+") == []
     # But Title Case / multi-word / known fields are parameters.
-    assert templates.extract_params("ping [Host] [Network-Path Reference] [label]") == ["Host", "Network-Path Reference", "label"]
+    assert templates.extract_params("ping [Host] [Network Path] [label]") == ["Host", "Network Path", "label"]
 
 
 def test_render_params_is_case_insensitive_and_leaves_unknown():
@@ -194,9 +194,9 @@ def test_apply_template_friendly_label_aliases(data_dir):
     with db.db_conn() as conn:
         conn.execute(
             "INSERT INTO nodes (id,label,network_resource,network_path,created_at,updated_at) VALUES ('n1','web01','server','10.0.0.1','x','x')")
-        # [Network-Path Reference] is the node form's label for the network-path field.
-        payload = {"name": "Ping [Network-Path Reference]", "method": "bash",
-                   "script": "ping -c1 [Network-Path Reference] as [Network Resource]"}
+        # [Network Path] is the node form's label for the network-path field.
+        payload = {"name": "Ping [Network Path]", "method": "bash",
+                   "script": "ping -c1 [Network Path] as [Network Resource]"}
         tpl = templates.save_template(conn, "friendly", "dataset", payload)
         res = templates.apply_dataset_template(conn, tpl["id"], "n1")  # no params needed
         ds = conn.execute("SELECT * FROM datasets WHERE id=?", (res["dataset_id"],)).fetchone()
@@ -210,23 +210,23 @@ def test_apply_template_with_params(data_dir):
     with db.db_conn() as conn:
         conn.execute(
             "INSERT INTO nodes (id,label,network_resource,network_path,created_at,updated_at) VALUES ('n1','web01','server','10.0.0.1','x','x')")
-        payload = {"name": "Ping [Network-Path Reference]", "method": "bash",
-                   "script": "ping -c1 [Network-Path Reference]",
-                   "metrics": [{"name": "rtt [Network-Path Reference]", "regex": r"time=(\d+)", "group_index": 1,
+        payload = {"name": "Ping [Network Path]", "method": "bash",
+                   "script": "ping -c1 [Network Path]",
+                   "metrics": [{"name": "rtt [Network Path]", "regex": r"time=(\d+)", "group_index": 1,
                                 "cast": "float", "unit": "ms",
                                 "rules": [{"op": "gt", "value": "[Threshold]", "status_level_id": 3, "priority": 0}]}]}
         tpl = templates.save_template(conn, "path-ping", "dataset", payload)
 
-        # Missing params are reported by name. [Network-Path Reference] auto-fills
+        # Missing params are reported by name. [Network Path] auto-fills
         # from the node's network path (friendly alias), so only [Threshold] is missing here.
         try:
             templates.apply_dataset_template(conn, tpl["id"], "n1")
             raise AssertionError("expected ValueError")
         except ValueError as exc:
-            assert "Threshold" in str(exc) and "Network-Path Reference" not in str(exc)
+            assert "Threshold" in str(exc) and "Network Path" not in str(exc)
 
         res = templates.apply_dataset_template(
-            conn, tpl["id"], "n1", {"Network-Path Reference": "db.internal", "Threshold": "50"})
+            conn, tpl["id"], "n1", {"Network Path": "db.internal", "Threshold": "50"})
         ds = conn.execute("SELECT * FROM datasets WHERE id=?", (res["dataset_id"],)).fetchone()
         assert ds["name"] == "Ping db.internal" and ds["script"] == "ping -c1 db.internal"
         m = conn.execute("SELECT * FROM metrics WHERE dataset_id=?", (ds["id"],)).fetchone()
@@ -241,7 +241,7 @@ def test_apply_template_node_fields_auto_fill(data_dir):
     with db.db_conn() as conn:
         conn.execute(
             "INSERT INTO nodes (id,label,network_resource,network_path,created_at,updated_at) VALUES ('n1','web01','server','10.0.0.1','x','x')")
-        payload = {"name": "Check [label]", "method": "bash", "script": "check [Network-Path Reference] as [Network Resource] ([id])"}
+        payload = {"name": "Check [label]", "method": "bash", "script": "check [Network Path] as [Network Resource] ([id])"}
         tpl = templates.save_template(conn, "node-fields", "dataset", payload)
         res = templates.apply_dataset_template(conn, tpl["id"], "n1")  # no params needed
         ds = conn.execute("SELECT * FROM datasets WHERE id=?", (res["dataset_id"],)).fetchone()

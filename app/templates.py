@@ -24,16 +24,16 @@ _PLACEHOLDER = re.compile(r"\{\{\s*([a-zA-Z0-9_.]+)\s*\}}")
 
 # ``[Square Bracket]`` parameter tokens. The name must start with a letter and
 # may only contain word-ish characters (spaces/hyphens allowed, e.g.
-# ``[Network-Path Reference]``), so shell idioms like ``[ -f /x ]``, ``[[ ]]``,
+# ``[Network Path]``), so shell idioms like ``[ -f /x ]``, ``[[ ]]``,
 # ``[1]`` and list literals like ``[id,name]`` are never mistaken for parameters.
 _PARAM = re.compile(r"\[(?=[A-Za-z])([A-Za-z0-9 _.\-]+)\]")
 
 # Auto-fillable parameter names (lower-cased). See ``known_params``. The raw
 # DB field names are intentionally NOT parameters — only ``label``/``id`` and
-# the friendly UI labels (``network-path reference``/``network resource``) are,
+# the friendly UI labels (``network path``/``network resource``) are,
 # so the terminology stays consistent with the node form.
 KNOWN_PARAM_KEYS = frozenset(
-    {"label", "id", "network-path reference", "network resource"}
+    {"label", "id", "network path", "network resource"}
 )
 
 
@@ -41,7 +41,7 @@ def is_param_name(name: str) -> bool:
     """Whether a ``[token]`` is a parameter rather than literal text.
 
     Parameters are intentionally-named: a known node field (any case), Title
-    Case (``[Host]``), or multi-word (``[Network-Path Reference]``). Lower-case
+    Case (``[Host]``), or multi-word (``[Network Path]``). Lower-case
     single words like ``[a-z]`` or ``[id]`` stay literal — this keeps regex
     character classes and URL path segments out of the parameter fields.
     """
@@ -78,13 +78,13 @@ def known_params(node: sqlite3.Row) -> dict:
     """Auto-fillable parameter values for a node, keyed by lower-cased name.
 
     The friendly names used by the node editor are the parameters — e.g.
-    ``[Network-Path Reference]`` fills from the node's network path, matching
+    ``[Network Path]`` fills from the node's network path, matching
     the label shown on the node form. ``label`` and ``id`` are also accepted.
     """
     return {
         "label": node["label"],
         "id": node["id"],
-        "network-path reference": node["network_path"],
+        "network path": node["network_path"],
         "network resource": node["network_resource"],
     }
 

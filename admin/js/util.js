@@ -48,13 +48,8 @@ export function toast(msg, kind = 'success') {
 export const NETWORK_RESOURCE_LABELS = { server: 'Server', dns: 'DNS', shared_folder: 'Shared Network Folder', web: 'Web' };
 export const networkResourceLabel = (k) => NETWORK_RESOURCE_LABELS[k] || k;
 
-// Hint shown under the Network-Path Reference input, per resource type.
-export const NETWORK_PATH_HINTS = {
-  server: 'DNS.domain / IP Address',
-  dns: 'DNS.domain',
-  shared_folder: '//path/to/shared/network/folder',
-  web: 'https://host/path',
-};
+// Hint shown under the Network Path input.
+export const NETWORK_PATH_PLACEHOLDER = 'DNS name / IP / URL';
 
 // Breadcrumb trail for the dock's drill-down views (Node › Dataset › Metric › …).
 // items: [{ label, nav }] — `nav` is a string of data-nav/data-* attributes that
