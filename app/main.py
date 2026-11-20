@@ -6,7 +6,7 @@ Endpoints (all JSON):
   statuses, latest metric values, status levels).
 * ``PUT  /api/graph``               — persist the nodegraph layout; node rows
   are synced (created/pruned) against the model.
-* ``PATCH/DELETE /api/nodes/{id}``  — node metadata (network path/resource).
+* ``PATCH/DELETE /api/nodes/{id}``  — node metadata (network path).
 * datasets / metrics / rules / alerts CRUD.
 * ``POST /api/datasets/{id}/run``   — force a collection now.
 * ``POST /api/test/run``            — dry-run a draft dataset (no persistence).
@@ -51,10 +51,6 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 ADMIN_DIR = Path(os.environ.get("SM_ADMIN_DIR", str(BASE_DIR / "admin")))
 DASHBOARD_DIR = Path(os.environ.get("SM_DASHBOARD_DIR", str(BASE_DIR / "dashboard")))
 PREFIXES = ("/admin", "/dashboard")
-
-# Network Resource types. Legacy resource values (vm/dns_alias/file_share) are
-# remapped to these on startup by db.migrate_network_resources().
-BASE_NETWORK_RESOURCES = ["server", "dns", "shared_folder", "web"]
 
 
 @asynccontextmanager
@@ -332,7 +328,7 @@ def _batched_snapshot(conn, levels: dict[int, dict]) -> list[dict]:
     out = []
     for n in nodes_rows:
         out.append({
-            "id": n["id"], "label": n["label"], "network_resource": n["network_resource"],
+            "id": n["id"], "label": n["label"],
             "network_path": n["network_path"],
             "status": _status_of(conn, n["status_level_id"], levels),
             "status_updated_at": n["status_updated_at"],
@@ -378,7 +374,6 @@ def put_graph(body: GraphBody) -> dict:
 # Nodes
 # ---------------------------------------------------------------------------
 class NodePatch(BaseModel):
-    network_resource: str | None = None
     network_path: str | None = None
 
 
@@ -387,8 +382,6 @@ def patch_node(node_id: str, body: NodePatch) -> dict:
     with _conn() as conn:
         _require(conn, "nodes", node_id, "node")
         fields, vals = [], []
-        if body.network_resource is not None:
-            fields.append("network_resource=?"); vals.append(body.network_resource)
         if body.network_path is not None:
             fields.append("network_path=?"); vals.append(body.network_path)
         if fields:
@@ -428,18 +421,6 @@ def run_node_now(node_id: str, background_tasks: BackgroundTasks) -> dict:
 
     background_tasks.add_task(_run)
     return {"ok": True, "queued": cur.rowcount, "started": len(ids)}
-
-
-@app.get("/api/network-resources")
-def list_network_resources() -> dict:
-    with _conn() as conn:
-        resources = set(BASE_NETWORK_RESOURCES)
-        for r in conn.execute("SELECT DISTINCT json_extract(payload,'$.network_resource') k FROM templates WHERE template_type='dataset'").fetchall():
-            if r["k"]:
-                resources.add(r["k"])
-        for r in conn.execute("SELECT DISTINCT network_resource FROM nodes WHERE network_resource NOT IN ({})".format(",".join("?" * len(BASE_NETWORK_RESOURCES))), BASE_NETWORK_RESOURCES).fetchall():
-            resources.add(r["network_resource"])
-    return {"network_resources": sorted(resources)}
 
 
 # ---------------------------------------------------------------------------

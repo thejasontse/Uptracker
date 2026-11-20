@@ -143,7 +143,7 @@ def test_template_roundtrip_and_apply(data_dir):
     db.init_db()
     with db.db_conn() as conn:
         conn.execute(
-            "INSERT INTO nodes (id,label,network_resource,network_path,created_at,updated_at) VALUES ('n1','web01','server','10.0.0.1','x','x')")
+            "INSERT INTO nodes (id,label,network_path,created_at,updated_at) VALUES ('n1','web01','10.0.0.1','x','x')")
         payload = {"name": "Ping {{node.label}}", "method": "bash", "script": "{{node.network_path}}",
                    "interval_s": 600, "timeout_s": 10,
                    "metrics": [{"name": "rtt", "regex": r"time=(\d+)", "group_index": 1, "cast": "float", "unit": "ms",
@@ -193,15 +193,15 @@ def test_apply_template_friendly_label_aliases(data_dir):
     db.init_db()
     with db.db_conn() as conn:
         conn.execute(
-            "INSERT INTO nodes (id,label,network_resource,network_path,created_at,updated_at) VALUES ('n1','web01','server','10.0.0.1','x','x')")
+            "INSERT INTO nodes (id,label,network_path,created_at,updated_at) VALUES ('n1','web01','10.0.0.1','x','x')")
         # [Network Path] is the node form's label for the network-path field.
         payload = {"name": "Ping [Network Path]", "method": "bash",
-                   "script": "ping -c1 [Network Path] as [Network Resource]"}
+                   "script": "ping -c1 [Network Path]"}
         tpl = templates.save_template(conn, "friendly", "dataset", payload)
         res = templates.apply_dataset_template(conn, tpl["id"], "n1")  # no params needed
         ds = conn.execute("SELECT * FROM datasets WHERE id=?", (res["dataset_id"],)).fetchone()
         assert ds["name"] == "Ping 10.0.0.1"
-        assert ds["script"] == "ping -c1 10.0.0.1 as server"
+        assert ds["script"] == "ping -c1 10.0.0.1"
 
 
 def test_apply_template_with_params(data_dir):
@@ -209,7 +209,7 @@ def test_apply_template_with_params(data_dir):
     db.init_db()
     with db.db_conn() as conn:
         conn.execute(
-            "INSERT INTO nodes (id,label,network_resource,network_path,created_at,updated_at) VALUES ('n1','web01','server','10.0.0.1','x','x')")
+            "INSERT INTO nodes (id,label,network_path,created_at,updated_at) VALUES ('n1','web01','10.0.0.1','x','x')")
         payload = {"name": "Ping [Network Path]", "method": "bash",
                    "script": "ping -c1 [Network Path]",
                    "metrics": [{"name": "rtt [Network Path]", "regex": r"time=(\d+)", "group_index": 1,
@@ -240,13 +240,13 @@ def test_apply_template_node_fields_auto_fill(data_dir):
     db.init_db()
     with db.db_conn() as conn:
         conn.execute(
-            "INSERT INTO nodes (id,label,network_resource,network_path,created_at,updated_at) VALUES ('n1','web01','server','10.0.0.1','x','x')")
-        payload = {"name": "Check [label]", "method": "bash", "script": "check [Network Path] as [Network Resource] ([id])"}
+            "INSERT INTO nodes (id,label,network_path,created_at,updated_at) VALUES ('n1','web01','10.0.0.1','x','x')")
+        payload = {"name": "Check [label]", "method": "bash", "script": "check [Network Path] ([id])"}
         tpl = templates.save_template(conn, "node-fields", "dataset", payload)
         res = templates.apply_dataset_template(conn, tpl["id"], "n1")  # no params needed
         ds = conn.execute("SELECT * FROM datasets WHERE id=?", (res["dataset_id"],)).fetchone()
         assert ds["name"] == "Check web01"
-        assert ds["script"] == "check 10.0.0.1 as server (n1)"
+        assert ds["script"] == "check 10.0.0.1 (n1)"
 
 
 def test_apply_template_mixes_mustaches_and_brackets(data_dir):
@@ -254,7 +254,7 @@ def test_apply_template_mixes_mustaches_and_brackets(data_dir):
     db.init_db()
     with db.db_conn() as conn:
         conn.execute(
-            "INSERT INTO nodes (id,label,network_resource,network_path,created_at,updated_at) VALUES ('n1','web01','server','10.0.0.1','x','x')")
+            "INSERT INTO nodes (id,label,network_path,created_at,updated_at) VALUES ('n1','web01','10.0.0.1','x','x')")
         payload = {"name": "{{node.label}} probe", "method": "bash",
                    "script": "curl -s http://{{node.network_path}}/[Port]/health"}
         tpl = templates.save_template(conn, "mixed", "dataset", payload)

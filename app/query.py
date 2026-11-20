@@ -2,9 +2,9 @@
 
 The admin query bar and the dashboard "Views" run user-authored SQL against a
 per-request TEMP table ``nodes_wide`` — one row per node with the columns shown
-in the table (id, label, network_resource, network_path, status,
-datasets) PLUS one column per distinct metric name (case-insensitive; a node
-that lacks a metric shows ``'N/A'``).
+in the table (id, label, network_path, status, datasets) PLUS one column per
+distinct metric name (case-insensitive; a node that lacks a metric shows
+``'N/A'``).
 
 Safety model (defence in depth):
   * The query runs on its own connection. TEMP objects live in the connection's
@@ -108,14 +108,13 @@ def _build_wide(conn: sqlite3.Connection) -> list[str]:
     """Create TEMP TABLE nodes_wide (node columns + one per metric). Returns
     the ordered list of column names exposed to the user query."""
     metrics = _metric_columns(conn)
-    cols = ["id", "node_id", "label", "network_resource", "network_path",
+    cols = ["id", "node_id", "label", "network_path",
             "status", "datasets"] + [disp for _, disp in metrics]
 
     coldefs = [
         "id TEXT PRIMARY KEY",
         "node_id TEXT",
         "label TEXT",
-        "network_resource TEXT",
         "network_path TEXT",
         "status TEXT",
         "datasets INTEGER",
@@ -126,8 +125,8 @@ def _build_wide(conn: sqlite3.Connection) -> list[str]:
     conn.execute(
         """
         INSERT INTO nodes_wide
-            (id, node_id, label, network_resource, network_path, status, datasets)
-        SELECT n.id, n.id, n.label, n.network_resource, n.network_path,
+            (id, node_id, label, network_path, status, datasets)
+        SELECT n.id, n.id, n.label, n.network_path,
                COALESCE(sl.name, 'unknown'),
                (SELECT COUNT(*) FROM datasets d WHERE d.node_id = n.id)
         FROM nodes n

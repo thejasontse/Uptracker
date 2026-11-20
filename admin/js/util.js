@@ -43,11 +43,6 @@ export function toast(msg, kind = 'success') {
   el._timer = setTimeout(() => { el.hidden = true; }, 3000);
 }
 
-// Network Resource types (mirrors BASE_NETWORK_RESOURCES in app/main.py). Unknown
-// resource types (e.g. from a dataset template) fall back to their raw value.
-export const NETWORK_RESOURCE_LABELS = { server: 'Server', dns: 'DNS', shared_folder: 'Shared Network Folder', web: 'Web' };
-export const networkResourceLabel = (k) => NETWORK_RESOURCE_LABELS[k] || k;
-
 // Hint shown under the Network Path input.
 export const NETWORK_PATH_PLACEHOLDER = 'DNS name / IP / URL';
 

@@ -8,7 +8,6 @@ export const state = {
   get snapshot() { return snapshot; },
   get selectedId() { return selectedId; },
   setSnapshot(s) {
-    if (snapshot._network_resources) s._network_resources = snapshot._network_resources;
     snapshot = s;
     subs.forEach((f) => f(snapshot));
   },

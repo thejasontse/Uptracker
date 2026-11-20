@@ -296,7 +296,6 @@ async function saveAsTemplate(node) {
   const name = prompt('Template name:');
   if (!name) return;
   const payload = {
-    network_resource: node.network_resource,
     name: draft.name, method: draft.method, script: draft.script,
     timeout_s: draft.timeout_s, interval_s: draft.interval_s,
     metrics: draft.metrics.map((m) => ({ name: m.name, regex: m.regex, group_index: m.group_index, cast: m.cast, unit: m.unit, rules: m.rules.map((r) => ({ op: r.op, value: r.value, status_level_id: r.status_level_id, priority: r.priority })) })),

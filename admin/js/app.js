@@ -327,10 +327,8 @@ function initCollapse() {
 }
 
 async function boot() {
-  // Fetch the snapshot and network resources concurrently — they are independent.
-  const [snap, netRes] = await Promise.all([api.snapshot(), api.networkResources()]);
+  const snap = await api.snapshot();
   state.setSnapshot(snap);
-  state.snapshot._network_resources = netRes.network_resources;
 
   // Apply the global theme default on load (pre-set the container class before
   // initGraph so the page never flashes the wrong theme; the graph.js observer

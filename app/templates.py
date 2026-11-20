@@ -30,10 +30,10 @@ _PARAM = re.compile(r"\[(?=[A-Za-z])([A-Za-z0-9 _.\-]+)\]")
 
 # Auto-fillable parameter names (lower-cased). See ``known_params``. The raw
 # DB field names are intentionally NOT parameters — only ``label``/``id`` and
-# the friendly UI labels (``network path``/``network resource``) are,
-# so the terminology stays consistent with the node form.
+# the friendly UI label (``network path``) are, so the terminology stays
+# consistent with the node form.
 KNOWN_PARAM_KEYS = frozenset(
-    {"label", "id", "network path", "network resource"}
+    {"label", "id", "network path"}
 )
 
 
@@ -67,7 +67,7 @@ def render(template: str, ctx: dict) -> str:
 
 def node_context(node: sqlite3.Row) -> dict:
     return {
-        "node": {"label": node["label"], "network_path": node["network_path"], "network_resource": node["network_resource"], "id": node["id"]},
+        "node": {"label": node["label"], "network_path": node["network_path"], "id": node["id"]},
     }
 
 
@@ -85,7 +85,6 @@ def known_params(node: sqlite3.Row) -> dict:
         "label": node["label"],
         "id": node["id"],
         "network path": node["network_path"],
-        "network resource": node["network_resource"],
     }
 
 

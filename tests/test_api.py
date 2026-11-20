@@ -213,44 +213,55 @@ def test_template_apply_missing_params(client):
 # ---------------- node patch ----------------
 def test_node_patch_metadata(client):
     _mk_node(client)
-    client.patch("/api/nodes/n1", json={"network_resource": "dns", "network_path": "ns1.example.com"})
+    client.patch("/api/nodes/n1", json={"network_path": "ns1.example.com"})
     n = client.get("/api/snapshot").json()["nodes"][0]
-    assert n["network_resource"] == "dns" and n["network_path"] == "ns1.example.com"
+    assert n["network_path"] == "ns1.example.com"
 
 
-# ---------------- network resources ----------------
-def test_network_resources_are_types(client):
-    resources = client.get("/api/network-resources").json()["network_resources"]
-    assert resources == ["dns", "server", "shared_folder", "web"]
-
-
-def test_network_resource_migration_remaps_legacy_values(data_dir):
-    """Legacy node resource values and dataset-template payload resource values
-    are remapped onto the current Network Resource types on startup (idempotent)."""
+# ---------------- network resource removal ----------------
+def test_network_resource_column_dropped_on_legacy_db(data_dir):
+    """A pre-existing database carrying ``nodes.network_resource`` and a
+    dataset-template payload with the legacy field is migrated cleanly: the
+    column is dropped, all dataset templates are removed (their payloads carry
+    the now-defunct resource type), and any ``[Network Resource]`` token or
+    ``{{node.network_resource}}`` mustache reference is stripped from stored
+    scripts. Idempotent — a second run changes nothing."""
     from app import db
 
-    db.init_db()  # create the schema
+    db.init_db()  # create the current schema (no network_resource column)
     with db.db_conn() as conn:
+        # Re-add the legacy column to simulate an older database.
+        conn.execute("ALTER TABLE nodes ADD COLUMN network_resource TEXT")
         for nid, res in (("a", "dns_alias"), ("b", "file_share"), ("c", "vm")):
             conn.execute(
-                "INSERT INTO nodes (id,label,network_resource,created_at,updated_at) VALUES (?,?,?,?,?)",
-                (nid, nid, res, "x", "x"))
+                "INSERT INTO nodes (id,label,network_path,network_resource,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?)",
+                (nid, nid, "", res, "x", "x"))
         conn.execute(
             "INSERT INTO templates (name,template_type,payload,created_at) VALUES (?,?,?,?)",
             ("t-legacy", "dataset", json.dumps({"name": "t", "network_resource": "dns_alias"}), "x"))
+        conn.execute(
+            "INSERT INTO datasets (node_id,name,method,script,interval_s,timeout_s,enabled,"
+            "param_values,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            ("a", "legacy ds", "bash", "check [Network Resource] {{node.network_resource}}",
+             600, 30, 1, json.dumps({"Network Resource": "dns_alias"}), "x", "x"))
 
     db.init_db()  # startup migration
 
     with db.db_conn() as conn:
-        got = dict(conn.execute("SELECT id, network_resource FROM nodes").fetchall())
-        assert got == {"a": "dns", "b": "shared_folder", "c": "server"}
-        payload = json.loads(conn.execute(
-            "SELECT payload FROM templates WHERE name='t-legacy'").fetchone()["payload"])
-        assert payload["network_resource"] == "dns"
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(nodes)")}
+        assert "network_resource" not in cols
+        assert conn.execute(
+            "SELECT COUNT(*) c FROM templates WHERE template_type='dataset'"
+        ).fetchone()["c"] == 0
+        script = conn.execute("SELECT script FROM datasets").fetchone()["script"]
+        assert "[Network Resource]" not in script
+        assert "{{node.network_resource}}" not in script
+        param_values = json.loads(conn.execute(
+            "SELECT param_values FROM datasets").fetchone()["param_values"])
+        assert "Network Resource" not in param_values
 
     db.init_db()  # idempotent: a second run changes nothing
-    with db.db_conn() as conn:
-        assert dict(conn.execute("SELECT id, network_resource FROM nodes").fetchall()) == got
 
 
 # ---------------- per-node collection queue ----------------
@@ -659,7 +670,7 @@ def test_query_columns_lists_node_fields_and_metrics(client):
     _mk_node(client)
     _seed_metric(client, metric="cpu")
     cols = client.get("/api/query/columns").json()["columns"]
-    for c in ("id", "label", "network_resource", "network_path", "status", "datasets"):
+    for c in ("id", "label", "network_path", "status", "datasets"):
         assert c in cols
     assert "cpu" in cols
 

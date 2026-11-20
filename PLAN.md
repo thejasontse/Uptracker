@@ -13,20 +13,20 @@
 - [x] Update tests in `test_logic.py` and `test_api.py`
 
 ## M3 — Drop per-node "Tracking enabled"
-- [ ] Remove checkbox + handler from `admin/js/panel.js`
-- [ ] Remove `tracking` from `NodePatch`, patch UPDATE, snapshot builder, scheduling kick in `app/main.py`
-- [ ] Migration `migrate_drop_node_tracking()` (ALTER TABLE DROP COLUMN) in `app/db.py`; update `_seed_demo`
-- [ ] Drop `tracking` from `nodes_wide` in `app/query.py` and docstring
-- [ ] Update tests: rename `test_node_patch_and_tracking`, fix column list at line 662
-- [ ] Reword comment in `admin/js/app.js:388`
+- [x] Remove checkbox + handler from `admin/js/panel.js`
+- [x] Remove `tracking` from `NodePatch`, patch UPDATE, snapshot builder, scheduling kick in `app/main.py`
+- [x] Migration `migrate_drop_node_tracking()` (ALTER TABLE DROP COLUMN) in `app/db.py`; update `_seed_demo`
+- [x] Drop `tracking` from `nodes_wide` in `app/query.py` and docstring
+- [x] Update tests: rename `test_node_patch_and_tracking`, fix column list at line 662
+- [x] Reword comment in `admin/js/app.js:388`
 
 ## M4 — Full removal of "Network Resource" + clear bundled templates
-- [ ] UI: remove dropdown + handler from `panel.js`; delete label map/hints from `util.js`; drop networkResources fetch from `app.js`; remove `_network_resources` preservation in `state.js`; remove API client method
-- [ ] Backend: delete `BASE_NETWORK_RESOURCES`, `/api/network-resources` endpoint, snapshot/NodePatch fields in `main.py`
-- [ ] Remove `"network resource"` param key from `templates.py`, `params.js`, `db.py` `_KNOWN_PARAM_KEYS`
-- [ ] Migration `migrate_drop_network_resource_and_clear_templates()`: DELETE dataset templates; strip tokens/mustaches from scripts+alerts+payloads; remove key from saved param_values; ALTER TABLE DROP COLUMN network_resource
-- [ ] Drop `network_resource` from `nodes_wide` in `app/query.py`
-- [ ] Tests: delete resource tests, fix INSERT statements in test_logic.py and test_api.py
+- [x] UI: remove dropdown + handler from `panel.js`; delete label map/hints from `util.js`; drop networkResources fetch from `app.js`; remove `_network_resources` preservation in `state.js`; remove API client method
+- [x] Backend: delete `BASE_NETWORK_RESOURCES`, `/api/network-resources` endpoint, snapshot/NodePatch fields in `main.py`
+- [x] Remove `"network resource"` param key from `templates.py`, `params.js`, `db.py` `_KNOWN_PARAM_KEYS`
+- [x] Migration `migrate_drop_network_resource_and_clear_templates()`: DELETE dataset templates; strip tokens/mustaches from scripts+alerts+payloads; remove key from saved param_values; ALTER TABLE DROP COLUMN network_resource
+- [x] Drop `network_resource` from `nodes_wide` in `app/query.py`
+- [x] Tests: delete resource tests, fix INSERT statements in test_logic.py and test_api.py
 
 ## M5 — Fixed terminal section at bottom of docked panel
 - [ ] Add `<div id="dockTerminal">` sibling to `#dockBody` in `admin/index.html`

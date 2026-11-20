@@ -298,7 +298,7 @@ def _maybe_alert(conn: sqlite3.Connection, metric: sqlite3.Row, status_id: int |
         if time.time() - last < cfg["cooldown_s"]:
             return
     node_id = _metric_node(conn, metric["id"])
-    node = conn.execute("SELECT label, network_path, network_resource FROM nodes WHERE id=?", (node_id,)).fetchone()
+    node = conn.execute("SELECT label, network_path FROM nodes WHERE id=?", (node_id,)).fetchone()
     ctx = _alert_ctx(node, metric, status_name, value)
     # Subject/body fall back to the global defaults, then to built-ins, so an
     # alert can leave them blank and still get a generated, name/status-based message.
@@ -324,7 +324,7 @@ def _metric_node(conn: sqlite3.Connection, metric_id: int) -> str | None:
 
 def _alert_ctx(node, metric, status_name: str, value: ParsedValue) -> dict:
     return {
-        "node": {"label": node["label"] if node else "", "network_path": node["network_path"] if node else "", "network_resource": node["network_resource"] if node else ""},
+        "node": {"label": node["label"] if node else "", "network_path": node["network_path"] if node else ""},
         "metric": {"name": metric["name"]},
         "status": status_name,
         "value": value.txt if value.txt is not None else (value.raw or ""),

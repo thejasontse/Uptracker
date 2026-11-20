@@ -9,8 +9,8 @@ export const PARAM_RE_SRC = String.raw`\[(?=[A-Za-z])([A-Za-z0-9 _.\-]+)\]`;
 
 // Known auto-fillable names (lower-cased). Mirrors app/templates.py. The raw
 // DB field names are intentionally NOT parameters — only label/id and the
-// friendly UI labels (network path / network resource) are.
-export const KNOWN_PARAM_KEYS = new Set(['label', 'id', 'network path', 'network resource']);
+// friendly UI label (network path) are.
+export const KNOWN_PARAM_KEYS = new Set(['label', 'id', 'network path']);
 
 // Intentional parameters are Title Case ([Host]), multi-word ([Network Path]),
 // or a known node field. Lower-case single words like [a-z] or
@@ -25,7 +25,6 @@ export function paramHints() {
     { name: 'label', hint: 'node label' },
     { name: 'id', hint: 'node id' },
     { name: 'Network Path', hint: "node's network path" },
-    { name: 'Network Resource', hint: "node's network resource" },
   ];
 }
 
@@ -50,7 +49,6 @@ export function knownParams(node) {
     label: node.label,
     id: node.id,
     'network path': node.network_path,
-    'network resource': node.network_resource,
   };
 }
 
@@ -62,12 +60,12 @@ export function paramValueMap(node, paramValues) {
 }
 
 // The user-entered values to PERSIST, keyed by display name, limited to the
-// tokens in *names*. Node-derived params ([label], [id], [Network Path],
-// [Network Resource]) are skipped: they always resolve live from the node at
-// node at execution time, so saving a snapshot would shadow the current node
-// value once the node is renamed or its network path changes (e.g. a stale
-// "label" making `ping [label]` target an old name). Only genuine custom tokens
-// ([Host], [Threshold], …) are stored. Blank values are dropped.
+// tokens in *names*. Node-derived params ([label], [id], [Network Path]) are
+// skipped: they always resolve live from the node at execution time, so saving
+// a snapshot would shadow the current node value once the node is renamed or
+// its network path changes (e.g. a stale "label" making `ping [label]` target
+// an old name). Only genuine custom tokens ([Host], [Threshold], …) are stored.
+// Blank values are dropped.
 export function customParamValues(names, paramValues) {
   const out = {};
   for (const name of names || []) {
@@ -92,7 +90,7 @@ export function substituteParams(text, values) {
 export function renderMustaches(text, node) {
   if (typeof text !== 'string') return text;
   return text.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (whole, path) => {
-    let cur = { node: { label: node.label, network_path: node.network_path, network_resource: node.network_resource, id: node.id } };
+    let cur = { node: { label: node.label, network_path: node.network_path, id: node.id } };
     for (const p of path.split('.')) {
       if (cur && typeof cur === 'object' && p in cur) cur = cur[p];
       else return '';

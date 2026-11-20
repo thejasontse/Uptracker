@@ -22,7 +22,6 @@ export const api = {
   snapshot: () => req('GET', 'api/snapshot'),
   putGraph: (model) => req('PUT', 'api/graph', { model }),
   patchNode: (id, p) => req('PATCH', `api/nodes/${id}`, p),
-  networkResources: () => req('GET', 'api/network-resources'),
 
   createDataset: (nodeId, b) => req('POST', `api/nodes/${nodeId}/datasets`, b),
   patchDataset: (id, b) => req('PATCH', `api/datasets/${id}`, b),

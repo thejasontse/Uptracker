@@ -88,9 +88,7 @@ CREATE TABLE IF NOT EXISTS graph_model (
 CREATE TABLE IF NOT EXISTS nodes (
     id                TEXT PRIMARY KEY,
     label             TEXT NOT NULL,
-    network_resource  TEXT NOT NULL DEFAULT 'server',
     network_path      TEXT NOT NULL DEFAULT '',
-    tracking          INTEGER NOT NULL DEFAULT 0,
     status_level_id   INTEGER REFERENCES status_levels(id) ON DELETE SET NULL,
     status_updated_at TEXT,
     created_at        TEXT NOT NULL,
@@ -223,7 +221,6 @@ def init_db() -> None:
         migrate_status_levels(conn)
         _seed_status_levels(conn)
         _seed_settings(conn)
-        migrate_network_resources(conn)
         migrate_mustache_tokens(conn)
         migrate_dataset_param_values(conn)
         migrate_strip_known_params(conn)
@@ -231,6 +228,7 @@ def init_db() -> None:
         migrate_alert_trigger_count(conn)
         migrate_rename_network_path_token(conn)
         migrate_drop_node_tracking(conn)
+        migrate_drop_network_resource_and_clear_templates(conn)
         row = conn.execute("SELECT json FROM graph_model WHERE id=1").fetchone()
         if row is None:
             conn.execute(
@@ -263,7 +261,7 @@ def migrate_dataset_param_values(conn: sqlite3.Connection) -> None:
 # Node-derived [Param] names — mirrored from app.templates.KNOWN_PARAM_KEYS.
 # Duplicated here (rather than imported) because templates.py imports this
 # module, so importing back would be circular.
-_KNOWN_PARAM_KEYS = {"label", "id", "network path", "network resource"}
+_KNOWN_PARAM_KEYS = {"label", "id", "network path"}
 
 
 def migrate_strip_known_params(conn: sqlite3.Connection) -> None:
@@ -375,6 +373,83 @@ def migrate_drop_node_tracking(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE nodes DROP COLUMN tracking")
 
 
+# ``[Network Resource]`` parameter token and its lower-cased param_values key,
+# plus the legacy ``{{node.network_resource}}`` mustache reference. All removed.
+_NETWORK_RESOURCE_TOKEN = "[Network Resource]"
+_NETWORK_RESOURCE_PARAM_KEY = "network resource"
+_NETWORK_RESOURCE_MUSTACHE_RE = re.compile(r"\{\{\s*node\.network_resource\s*\}\}")
+
+
+def _strip_network_resource_text(text: Any) -> Any:
+    if not isinstance(text, str):
+        return text
+    out = text.replace(_NETWORK_RESOURCE_TOKEN, "")
+    return _NETWORK_RESOURCE_MUSTACHE_RE.sub("", out)
+
+
+def _strip_network_resource_tree(obj: Any) -> Any:
+    if isinstance(obj, dict):
+        return {k: _strip_network_resource_tree(v) for k, v in obj.items()
+                if str(k).strip().lower() != _NETWORK_RESOURCE_PARAM_KEY}
+    if isinstance(obj, list):
+        return [_strip_network_resource_tree(v) for v in obj]
+    if isinstance(obj, str):
+        return _strip_network_resource_text(obj)
+    return obj
+
+
+def migrate_drop_network_resource_and_clear_templates(conn: sqlite3.Connection) -> None:
+    """Fully remove the "Network Resource" concept.
+
+    Bundled and user-saved dataset templates (``templates.template_type='dataset'``)
+    are deleted because their payloads carry a ``network_resource`` field that no
+    longer maps to anything in the schema or UI. Stored dataset scripts, alert
+    subjects/bodies, and remaining template payloads have any ``[Network Resource]``
+    token and ``{{node.network_resource}}`` mustache reference stripped; saved
+    ``datasets.param_values`` blobs lose the matching lower-cased key. Finally the
+    legacy ``nodes.network_resource`` column is dropped. Idempotent — a no-op once
+    the column is gone."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(nodes)")}
+    if "network_resource" not in cols:
+        return
+
+    conn.execute("DELETE FROM templates WHERE template_type='dataset'")
+
+    for table, text_cols in (("datasets", ("script",)),
+                             ("alert_configs", ("subject", "body"))):
+        for row in conn.execute(f"SELECT id, {', '.join(text_cols)} FROM {table}").fetchall():
+            updates = {c: _strip_network_resource_text(row[c]) for c in text_cols}
+            if any(updates[c] != row[c] for c in text_cols):
+                sets = ", ".join(f"{c}=?" for c in text_cols)
+                conn.execute(f"UPDATE {table} SET {sets} WHERE id=?",
+                             (*[updates[c] for c in text_cols], row["id"]))
+
+    for row in conn.execute("SELECT id, payload FROM templates").fetchall():
+        try:
+            payload = json.loads(row["payload"])
+        except (ValueError, TypeError):
+            continue
+        new_payload = _strip_network_resource_tree(payload)
+        if new_payload != payload:
+            conn.execute("UPDATE templates SET payload=? WHERE id=?",
+                         [json.dumps(new_payload), row["id"]])
+
+    for row in conn.execute("SELECT id, param_values FROM datasets").fetchall():
+        try:
+            vals = json.loads(row["param_values"] or "{}")
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(vals, dict):
+            continue
+        kept = {k: v for k, v in vals.items()
+                if str(k).strip().lower() != _NETWORK_RESOURCE_PARAM_KEY}
+        if len(kept) != len(vals):
+            conn.execute("UPDATE datasets SET param_values=? WHERE id=?",
+                         [json.dumps(kept), row["id"]])
+
+    conn.execute("ALTER TABLE nodes DROP COLUMN network_resource")
+
+
 def migrate_alert_trigger_count(conn: sqlite3.Connection) -> None:
     """Add ``alert_configs.trigger_count`` (how many consecutive scheduled runs in a
     qualifying status are required before an email is sent; 1 = alert on the first
@@ -395,22 +470,17 @@ def migrate_alert_trigger_count(conn: sqlite3.Connection) -> None:
         )
 
 
-# Legacy node/template network-resource values remapped onto the current types.
-NETWORK_RESOURCE_REMAP = {"dns_alias": "dns", "file_share": "shared_folder", "vm": "server"}
-
-
 def migrate_rename_columns(conn: sqlite3.Connection) -> None:
-    """Rename the legacy ``nodes.kind``/``nodes.uri`` and ``templates.kind``
-    columns to ``network_resource``/``network_path``/``template_type`` so the
-    schema matches the UI terminology. ``CREATE TABLE IF NOT EXISTS`` leaves an
-    existing (old) database untouched, so the rename has to be explicit.
-    Idempotent — a no-op once the columns already carry the new names.
+    """Rename the legacy ``nodes.uri`` and ``templates.kind`` columns to
+    ``network_path``/``template_type`` so the schema matches the UI terminology.
+    ``CREATE TABLE IF NOT EXISTS`` leaves an existing (old) database untouched,
+    so the rename has to be explicit. Idempotent — a no-op once the columns
+    already carry the new names.
 
-    Runs before ``migrate_network_resources``/``migrate_mustache_tokens`` so
-    those can assume the new column names."""
+    Runs before ``migrate_mustache_tokens`` so that migration can assume the
+    new column names. The legacy ``nodes.kind`` column is left in place when
+    present; ``migrate_drop_network_resource_and_clear_templates`` drops it."""
     node_cols = {r["name"] for r in conn.execute("PRAGMA table_info(nodes)")}
-    if "kind" in node_cols and "network_resource" not in node_cols:
-        conn.execute("ALTER TABLE nodes RENAME COLUMN kind TO network_resource")
     if "uri" in node_cols and "network_path" not in node_cols:
         conn.execute("ALTER TABLE nodes RENAME COLUMN uri TO network_path")
     tpl_cols = {r["name"] for r in conn.execute("PRAGMA table_info(templates)")}
@@ -478,31 +548,6 @@ def migrate_mustache_tokens(conn: sqlite3.Connection) -> None:
         if new_payload != payload:
             conn.execute("UPDATE templates SET payload=? WHERE id=?",
                          [json.dumps(new_payload), row["id"]])
-
-
-def migrate_network_resources(conn: sqlite3.Connection) -> None:
-    """Remap legacy network-resource values to the current types.
-
-    Covers both ``nodes.network_resource`` and the ``network_resource`` field
-    inside dataset-template payloads (``templates.payload``), which otherwise
-    resurface in the resource list served to the UI. Idempotent — a no-op once
-    everything is remapped."""
-    for old, new in NETWORK_RESOURCE_REMAP.items():
-        conn.execute("UPDATE nodes SET network_resource=? WHERE network_resource=?", (new, old))
-    for r in conn.execute("SELECT id, payload FROM templates").fetchall():
-        try:
-            payload = json.loads(r["payload"])
-        except (ValueError, TypeError):
-            continue
-        if not isinstance(payload, dict):
-            continue
-        new = NETWORK_RESOURCE_REMAP.get(payload.get("network_resource"))
-        if new:
-            payload["network_resource"] = new
-            conn.execute(
-                "UPDATE templates SET payload=? WHERE id=?",
-                [json.dumps(payload), r["id"]],
-            )
 
 
 # The fixed status vocabulary. Statuses are not user-editable: rules assign
@@ -853,9 +898,9 @@ def _seed_demo(conn: sqlite3.Connection) -> None:
     node_id = "localhost"
     now = now_iso()
     conn.execute(
-        "INSERT INTO nodes (id, label, network_resource, network_path, "
-        "created_at, updated_at) VALUES (?,?,?,?,?,?)",
-        (node_id, "localhost", "server", "localhost", now, now),
+        "INSERT INTO nodes (id, label, network_path, created_at, updated_at) "
+        "VALUES (?,?,?,?,?)",
+        (node_id, "localhost", "localhost", now, now),
     )
 
     # Add the node to the graph layout so the admin canvas renders it.

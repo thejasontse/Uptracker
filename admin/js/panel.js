@@ -4,7 +4,7 @@
 // on demand (Refresh button) or after a mutation, so in-progress edits are safe.
 import { api } from './api.js';
 import { state } from './state.js';
-import { esc, breadcrumb, networkResourceLabel, NETWORK_PATH_PLACEHOLDER, toast, formatTimestamp } from './util.js';
+import { esc, breadcrumb, NETWORK_PATH_PLACEHOLDER, toast, formatTimestamp } from './util.js';
 import { renderDatasetEditor } from './editor.js';
 import { renderMetricsView } from './metrics.js';
 import { renderRulesView } from './rules.js';
@@ -101,14 +101,10 @@ function homeHtml() {
 
 // ---------------- node detail ----------------
 function nodeHtml(n) {
-  const resources = [...new Set([...(state.snapshot._network_resources || []), n.network_resource])];
-  const resourceOpts = resources.map((k) => `<option value="${esc(k)}" ${k === n.network_resource ? 'selected' : ''}>${esc(networkResourceLabel(k))}</option>`).join('');
   return `
   <div class="section">
     <h2 class="page-title">${esc(n.label)}</h2>
     ${breadcrumb([{ label: 'Datasets' }])}
-    <label class="f">Network Resource</label>
-    <select id="resourceSel">${resourceOpts}</select>
     <label class="f">Network Path</label>
     <div class="row"><input id="pathIn" value="${esc(n.network_path)}" placeholder="${esc(NETWORK_PATH_PLACEHOLDER)}"><button id="pathSave" class="small">Save</button></div>
     <div class="row">
@@ -215,16 +211,9 @@ async function onDockClick(e) {
 }
 
 async function onDockChange(e) {
-  const node = state.node(state.selectedId);
-  if (!node || route.view !== 'node') return;
-  if (e.target.id === 'resourceSel') {
-    // Swap the Network Path placeholder immediately; the PATCH/refresh
-    // re-renders the panel with the persisted resource type afterwards.
-    const pathIn = document.getElementById('pathIn');
-    if (pathIn) pathIn.placeholder = NETWORK_PATH_PLACEHOLDER;
-    await api.patchNode(node.id, { network_resource: e.target.value });
-    await refresh();
-  }
+  // No dock-level change handlers remain: the node form's only fields are saved
+  // via their explicit Save button (pathSave), and dataset/metrics/rules editors
+  // manage their own inputs locally.
 }
 
 export async function refresh() {
