@@ -55,7 +55,7 @@ export function renderDatasetEditor(body, node, ds, ctx) {
     <textarea id="dsScript" placeholder="e.g. curl -s http://{{node.network_path}}/health">${esc(draft.script)}</textarea>
     <p class="muted">Protocol probes are ordinary commands — <code>ping -c1 host</code>, <code>nc -z host 443</code>, <code>curl -s url</code>. Credentials are available to the script as <code>$SM_USER</code> / <code>$SM_SECRET</code>.</p>
     <div id="tplParams" class="card" hidden>
-      <div class="head"><span class="t">Parameters</span><span class="muted">[Name] tokens are saved as-is and filled in at collection time</span></div>
+      <div class="head"><span class="t">Parameters</span></div>
       <div id="tplParamFields"></div>
     </div>
     <div class="row">

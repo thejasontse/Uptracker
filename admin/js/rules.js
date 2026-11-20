@@ -131,7 +131,7 @@ export function renderRulesView(body, node, ds, metricRow, navCtx) {
     <p class="muted">A rule sets the metric's status when its value matches. Highest priority wins;
       ties go to the worse status. No matching rule → <b>unknown</b>.</p>
     <div id="rpParams" class="card" hidden>
-      <div class="head"><span class="t">Parameters</span><span class="muted">[Name] tokens are filled in for this test run</span></div>
+      <div class="head"><span class="t">Parameters</span></div>
       <div id="rpParamFields"></div>
     </div>
     <div class="row"><button id="btnAddRule" class="small">+ Rule</button>

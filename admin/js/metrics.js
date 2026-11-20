@@ -75,7 +75,7 @@ export function renderMetricsView(body, node, ds, navCtx) {
     <p class="muted">Each metric mines the dataset's raw output with a regex capture group.
       Add rules to a metric to turn its value into a status.</p>
     <div id="mpParams" class="card" hidden>
-      <div class="head"><span class="t">Parameters</span><span class="muted">[Name] tokens are saved as-is and filled in at collection time</span></div>
+      <div class="head"><span class="t">Parameters</span></div>
       <div id="mpParamFields"></div>
     </div>
     <div class="row"><button id="btnNewMetric" class="small">+ Metric</button>
