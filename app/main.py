@@ -35,6 +35,8 @@ from typing import Any
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.gzip import GZipMiddleware
+from starlette.types import Receive, Scope, Send
 from pydantic import BaseModel, Field
 
 from . import collector, db, query, scheduler, templates as tpl
@@ -66,6 +68,27 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Uptracker", lifespan=lifespan)
 
+# Compress API JSON (the snapshot dominates transfer on large graphs). Small
+# bodies and already-compressed payloads are skipped via minimum_size.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+
+class _BundleStaticFiles(StaticFiles):
+    """Static bundle with release-friendly caching.
+
+    JS/CSS/vendor assets are served immutable for a year — they only change on
+    deploy, and browsers revalidate cheaply via the ETag/Last-Modified that
+    StaticFiles already emits when a hard reload is needed. HTML documents keep
+    ``no-cache`` so a deploy is picked up on the next navigation."""
+
+    async def get_response(self, path: str, scope: Scope):
+        response = await super().get_response(path, scope)
+        if response.headers.get("content-type", "").startswith("text/html"):
+            response.headers["Cache-Control"] = "no-cache"
+        else:
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
 
 @app.middleware("http")
 async def prefix_api(request: Request, call_next):
@@ -83,13 +106,12 @@ async def prefix_api(request: Request, call_next):
 
 
 @app.middleware("http")
-async def no_cache_static(request: Request, call_next):
-    """Force revalidation of frontend assets so edits aren't masked by stale
-    browser caches (StaticFiles still serves 304s via ETag/Last-Modified)."""
+async def no_cache_api(request: Request, call_next):
+    """Force revalidation of API JSON so the UI never acts on stale data.
+    (Static assets get long-lived caching from ``_BundleStaticFiles``.)"""
     response = await call_next(request)
     path = request.url.path
-    if (path == "/" or path.startswith(("/js/", "/vendor/", "/app.css"))
-            or any(path.startswith(f"{p}/") for p in PREFIXES)):
+    if path == "/" or path == "/api" or path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-cache"
     return response
 
@@ -1070,4 +1092,4 @@ def root() -> RedirectResponse:
 
 for _name, _dir in (("admin", ADMIN_DIR), ("dashboard", DASHBOARD_DIR)):
     (_dir / "vendor").mkdir(parents=True, exist_ok=True)
-    app.mount(f"/{_name}", StaticFiles(directory=_dir, html=True), name=_name)
+    app.mount(f"/{_name}", _BundleStaticFiles(directory=_dir, html=True), name=_name)

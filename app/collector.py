@@ -77,14 +77,17 @@ def _get_secret(conn: sqlite3.Connection, credential_id: int | None) -> tuple[st
     return secret_box().decrypt(row["secret_enc"]), row["username"]
 
 
-def _param_values(conn: sqlite3.Connection, ds) -> dict[str, str]:
+def _param_values(conn: sqlite3.Connection, ds, node=None) -> dict[str, str]:
     """Build the ``[Param]`` resolution map for a dataset at execution time.
 
     Node-derived parameters (Host/Port/Protocol/…) seed the map, then the
     dataset's saved ``param_values`` override them (case-insensitively). A
     token with no entry is left untouched by :func:`templates.render_params`.
+    ``node`` may be a pre-loaded node row (the collection path loads it once
+    per run); when omitted it is fetched here.
     """
-    node = conn.execute("SELECT * FROM nodes WHERE id=?", (ds["node_id"],)).fetchone()
+    if node is None:
+        node = conn.execute("SELECT * FROM nodes WHERE id=?", (ds["node_id"],)).fetchone()
     vals: dict[str, str] = {}
     if node is not None:
         vals.update(templates.known_params(node))
@@ -106,12 +109,14 @@ def _param_values(conn: sqlite3.Connection, ds) -> dict[str, str]:
     return vals
 
 
-def _resolve(conn: sqlite3.Connection, ds, text) -> str:
+def _resolve(conn: sqlite3.Connection, ds, text, node=None) -> str:
     """Fully resolve a stored template string for execution: ``{{mustache}}``
-    node fields first, then ``[Param]`` tokens."""
-    node = conn.execute("SELECT * FROM nodes WHERE id=?", (ds["node_id"],)).fetchone()
+    node fields first, then ``[Param]`` tokens. ``node`` may be a pre-loaded
+    node row to avoid re-querying it."""
+    if node is None:
+        node = conn.execute("SELECT * FROM nodes WHERE id=?", (ds["node_id"],)).fetchone()
     ctx = templates.node_context(node) if node is not None else {}
-    return templates.render_params(templates.render(text or "", ctx), _param_values(conn, ds))
+    return templates.render_params(templates.render(text or "", ctx), _param_values(conn, ds, node))
 
 
 def collect_dataset(conn: sqlite3.Connection, dataset_id: int, *, persist: bool = True,
@@ -130,22 +135,32 @@ def collect_dataset(conn: sqlite3.Connection, dataset_id: int, *, persist: bool 
         return {"ok": False, "error": "dataset not found", "metrics": []}
 
     secret, username = _get_secret(conn, ds["credential_id"])
-    script = _resolve(conn, ds, ds["script"])
+    node = conn.execute("SELECT * FROM nodes WHERE id=?", (ds["node_id"],)).fetchone()
+    script = _resolve(conn, ds, ds["script"], node)
     result = executor.run_dataset(ds["method"], script, ds["timeout_s"], secret, username)
 
     levels, unknown_id = _load_status_levels(conn)
     ranks = {lid: lv["rank"] for lid, lv in levels.items()}
     outcomes: list[MetricOutcome] = []
 
-    pvals = _param_values(conn, ds)
+    pvals = _param_values(conn, ds, node)
     metrics = conn.execute("SELECT * FROM metrics WHERE dataset_id=?", (dataset_id,)).fetchall()
+    # One query for every rule of this dataset's metrics, grouped in Python —
+    # the per-metric loop used to issue a SELECT each.
+    rules_by_met: dict[int, list] = {}
+    if metrics:
+        ph = ",".join("?" * len(metrics))
+        for r in conn.execute(
+            f"SELECT * FROM rules WHERE metric_id IN ({ph})", tuple(m["id"] for m in metrics)
+        ).fetchall():
+            rules_by_met.setdefault(r["metric_id"], []).append(r)
     for m in metrics:
         regex = templates.render_params(m["regex"] or "", pvals)
         value = extract(result.raw, regex, m["group_index"], m["cast"])
         rule_rows = [
             rules_mod.RuleRow(r["id"], r["op"], templates.render_params(r["value"] or "", pvals),
                               r["status_level_id"], r["priority"])
-            for r in conn.execute("SELECT * FROM rules WHERE metric_id=?", (m["id"],)).fetchall()
+            for r in rules_by_met.get(m["id"], [])
         ]
         status_id = rules_mod.evaluate_metric(rule_rows, value, ranks)
         if status_id is None:

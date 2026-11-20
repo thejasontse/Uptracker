@@ -535,20 +535,29 @@ def sync_nodes(conn: sqlite3.Connection, model: dict[str, Any]) -> None:
     Creates rows for new nodes, updates labels (the editor is authoritative),
     and prunes nodes removed from the canvas (cascading to datasets/metrics/…).
     Shared by ``PUT /api/graph`` and the archive import so both paths stay in
-    lockstep."""
-    model_ids = {n["id"] for n in model.get("nodes", []) if "id" in n}
+    lockstep. Set-based (one statement per phase) instead of per-node queries,
+    so large graphs save in constant time."""
     labels = {n["id"]: n.get("label", "Node") for n in model.get("nodes", []) if "id" in n}
-    for nid in model_ids:
-        conn.execute(
-            "INSERT OR IGNORE INTO nodes (id, label, created_at, updated_at) VALUES (?,?,?,?)",
-            (nid, labels.get(nid, "Node"), now_iso(), now_iso()),
-        )
-    for nid, label in labels.items():
-        conn.execute("UPDATE nodes SET label=?, updated_at=? WHERE id=? AND label!=?",
-                     (label, now_iso(), nid, label))
-    for row in conn.execute("SELECT id FROM nodes").fetchall():
-        if row["id"] not in model_ids:
-            conn.execute("DELETE FROM nodes WHERE id=?", (row["id"],))
+    now = now_iso()
+    conn.executemany(
+        "INSERT OR IGNORE INTO nodes (id, label, created_at, updated_at) VALUES (?,?,?,?)",
+        [(nid, label, now, now) for nid, label in labels.items()],
+    )
+    conn.executemany(
+        "UPDATE nodes SET label=?, updated_at=? WHERE id=? AND label!=?",
+        [(label, now, nid, label) for nid, label in labels.items()],
+    )
+    model_ids = set(labels)
+    if model_ids:
+        ids = list(model_ids)
+        for i in range(0, len(ids), 500):  # stay under SQLite's bind-parameter limit
+            chunk = ids[i:i + 500]
+            conn.execute(
+                f"DELETE FROM nodes WHERE id NOT IN ({','.join('?' * len(chunk))})",
+                chunk,
+            )
+    else:
+        conn.execute("DELETE FROM nodes")
 
 
 # ---------------------------------------------------------------------------
