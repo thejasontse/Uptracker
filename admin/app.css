@@ -83,6 +83,7 @@ main { flex: 1; display: flex; min-height: 0; position: relative; }
   border-top: 1px solid var(--ng-node-border);
   background: var(--ng-node-bg);
 }
+#dockTerminal[hidden] { display: none; }
 .term-header {
   flex: none; padding: 4px 8px; font-size: 10px; color: var(--ng-muted);
   background: var(--ng-header-bg); border-bottom: 1px solid var(--ng-node-border);
