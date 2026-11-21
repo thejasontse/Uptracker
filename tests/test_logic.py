@@ -56,6 +56,24 @@ def test_rule_string_ops():
     assert rule_matches(_rule("eq", "UP"), v)
 
 
+def test_rule_eq_ne_numeric_with_unit_text():
+    # Percentage-style metrics: the captured text carries a unit or the metric
+    # is cast to str, so eq/ne must compare numeric prefixes (disk usage %).
+    pct = extract("85%", r"(\d+%)", 1, "auto")   # num None ("85%" won't float())
+    assert rule_matches(_rule("eq", "85"), pct)
+    assert rule_matches(_rule("eq", "85%"), pct)  # rule value with a unit too
+    assert not rule_matches(_rule("eq", "80"), pct)
+    assert rule_matches(_rule("ne", "80"), pct)
+    assert not rule_matches(_rule("ne", "85"), pct)
+    strv = extract("85", r"(\d+)", 1, "str")      # cast=str: num is None
+    assert rule_matches(_rule("eq", "85"), strv)
+    assert not rule_matches(_rule("eq", "86"), strv)
+    # Genuine string equality still wins when neither side is numeric.
+    up = extract("UP", r"(\w+)", 1, "str")
+    assert rule_matches(_rule("eq", "UP"), up)
+    assert not rule_matches(_rule("eq", "85"), up)
+
+
 def test_rule_missing_present():
     v = extract("nope", r"rtt=(\d+)")
     assert rule_matches(_rule("missing", ""), v)

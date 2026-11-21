@@ -121,7 +121,7 @@ function applyTemplateToDraft(t) {
     group_index: m.group_index ?? 1, cast: m.cast || 'auto', unit: mu(m.unit || ''),
     rules: (m.rules || []).map((r) => ({
       id: null, op: r.op || 'missing', value: mu(r.value ?? ''),
-      status_level_id: r.status_level_id ?? defaultLevelId(), priority: r.priority ?? 0,
+      status_level_id: Number(r.status_level_id ?? defaultLevelId()), priority: r.priority ?? 0,
     })),
   }));
   document.getElementById('dsName').value = draft.name;

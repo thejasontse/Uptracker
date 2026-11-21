@@ -42,6 +42,14 @@ function _parseStatusDefault(raw) {
 }
 let lastTest = null;     // parsed value entry from the most recent test run
 
+// True when *text*'s leading numeric prefix equals cnum — mirrors _text_num_equal
+// in app/rules.py so eq/ne match percentage-style values ("85 %", rule "85%")
+// that never compare equal as raw strings.
+function textNumEqual(text, cnum) {
+  const m = /^\s*(-?\d+(?:\.\d+)?)/.exec(String(text ?? ''));
+  return m ? parseFloat(m[1]) === cnum : false;
+}
+
 // Client-side mirror of app/rules.py rule_matches(). *value* is a parsed test
 // result {num, txt, raw, error}; returns true when the rule condition holds.
 function ruleMatches(op, ruleValue, value) {
@@ -57,8 +65,12 @@ function ruleMatches(op, ruleValue, value) {
     case 'lt': return num != null && hasCnum && num < cnum;
     case 'gte': return num != null && hasCnum && num >= cnum;
     case 'lte': return num != null && hasCnum && num <= cnum;
-    case 'eq': return (num != null && hasCnum) ? num === cnum : text === ruleValue;
-    case 'ne': return (num != null && hasCnum) ? num !== cnum : text !== ruleValue;
+    case 'eq':
+      if (hasCnum) return (num != null && num === cnum) || textNumEqual(text, cnum);
+      return text === ruleValue;
+    case 'ne':
+      if (hasCnum) return !((num != null && num === cnum) || textNumEqual(text, cnum));
+      return text !== ruleValue;
     case 'contains': return text.includes(ruleValue);
     case 'regex': try { return new RegExp(ruleValue).test(text); } catch { return false; }
     case 'is':
@@ -97,15 +109,22 @@ function testParamNames() {
 
 function refreshParams() {
   paintParamFields(
-    document.getElementById('rpParams'),
+    document.getElementById('rpParamsWrap') || document.getElementById('rpParams'),
     document.getElementById('rpParamFields'),
     testParamNames(), nodeRef, paramValues,
   );
 }
 
 // The three assignable statuses (unknown is the fallback, never chosen here).
+// Sorted by rank so "warning" — not whichever row happens to come first in the
+// snapshot (which is ordered by rank too, but unknown sits at rank 0) — is the
+// first option and the preselect for new rules. With the seeded ids that puts
+// critical(3), warning(2), good(1): a stray submit lands on warning instead of
+// silently flipping every rule to "good".
 function assignableLevels() {
-  return state.snapshot.status_levels.filter((l) => RULE_STATUSES.has(l.name));
+  return state.snapshot.status_levels
+    .filter((l) => RULE_STATUSES.has(l.name))
+    .sort((a, b) => b.rank - a.rank);
 }
 
 export function renderRulesView(body, node, ds, metricRow, navCtx) {
@@ -131,9 +150,12 @@ export function renderRulesView(body, node, ds, metricRow, navCtx) {
     ])}
     <p class="muted">A rule sets the metric's status when its value matches. Highest priority wins;
       ties go to the worse status. No matching rule → <b>unknown</b>.</p>
-    <div id="rpParams" class="card" hidden>
-      <div class="head"><span class="t">Parameters</span></div>
-      <div id="rpParamFields"></div>
+    <div id="rpParamsWrap" hidden>
+      <div id="rpParams" class="card">
+        <div class="head"><span class="t">Parameters</span></div>
+        <div id="rpParamFields"></div>
+      </div>
+      <hr class="params-hr">
     </div>
     <div class="row"><button id="btnAddRule" class="small">+ Rule</button>
       <button id="btnTestRules" class="small">Test rules</button></div>
@@ -173,7 +195,7 @@ function ruleRow(r, i) {
     <select data-ri="${i}" data-rulefield="op">${OPS.map(([v, l]) => `<option value="${v}" ${r.op === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
     ${noValue ? '<span></span>' : `<span><input data-ri="${i}" data-rulefield="value" value="${esc(r.value)}" placeholder="${ph}"></span>`}
     <span class="muted">→</span>
-    <select data-ri="${i}" data-rulefield="status_level_id">${levels.map((l) => `<option value="${l.id}" ${r.status_level_id === l.id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select>
+    <select data-ri="${i}" data-rulefield="status_level_id">${levels.map((l) => `<option value="${esc(String(l.id))}" ${Number(r.status_level_id) === l.id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select>
     <button class="small danger" data-ri="${i}" data-delrule>×</button>
   </div>`;
 }
@@ -185,7 +207,10 @@ function renderRules() {
   list.querySelectorAll('[data-rulefield]').forEach((el) => {
     el.onchange = () => {
       const r = draft.rules[Number(el.dataset.ri)];
-      r[el.dataset.rulefield] = el.type === 'number' ? Number(el.value) : el.value;
+      const field = el.dataset.rulefield;
+      // The status select's DOM value is a string; store it as a number so the
+      // row re-renders with the right option selected and save() PATCHes an int.
+      r[field] = (field === 'status_level_id' || el.type === 'number') ? Number(el.value) : el.value;
       // Changing the operator can toggle the value field (missing/present) or
       // reveal the between hint, so repaint the row list.
       if (el.dataset.rulefield === 'op') { renderRules(); refreshParams(); }

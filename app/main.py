@@ -330,6 +330,7 @@ def _batched_snapshot(conn, levels: dict[int, dict]) -> list[dict]:
         out.append({
             "id": n["id"], "label": n["label"],
             "network_path": n["network_path"],
+            "tags": n["tags"] if "tags" in n.keys() else "",
             "status": _status_of(conn, n["status_level_id"], levels),
             "status_updated_at": n["status_updated_at"],
             "datasets": [build_dataset(d) for d in ds_by_node.get(n["id"], [])],
@@ -375,6 +376,21 @@ def put_graph(body: GraphBody) -> dict:
 # ---------------------------------------------------------------------------
 class NodePatch(BaseModel):
     network_path: str | None = None
+    tags: str | None = None
+
+
+def _normalize_tags(raw: str) -> str:
+    """Normalize a comma-separated tag list: trim each tag, drop empties, and
+    dedupe case-insensitively (first-seen casing wins), preserving order."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for part in raw.split(","):
+        tag = part.strip()
+        if not tag or tag.lower() in seen:
+            continue
+        seen.add(tag.lower())
+        out.append(tag)
+    return ",".join(out)
 
 
 @app.patch("/api/nodes/{node_id}")
@@ -384,6 +400,8 @@ def patch_node(node_id: str, body: NodePatch) -> dict:
         fields, vals = [], []
         if body.network_path is not None:
             fields.append("network_path=?"); vals.append(body.network_path)
+        if body.tags is not None:
+            fields.append("tags=?"); vals.append(_normalize_tags(body.tags))
         if fields:
             fields.append("updated_at=?"); vals.append(db.now_iso())
             conn.execute(f"UPDATE nodes SET {', '.join(fields)} WHERE id=?", (*vals, node_id))

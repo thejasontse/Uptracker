@@ -69,6 +69,23 @@ def _coerce(value: ParsedValue, compare: str) -> tuple[float | None, str, float 
     return value.num, text, compare_num
 
 
+def _text_num_equal(text: str, compare_num: float) -> bool:
+    """True when *text*'s leading numeric prefix equals *compare_num*.
+
+    A rule value like ``85%`` parses to 85.0 via float() but never equals the
+    raw string, and a metric cast to ``str`` (or captured with a unit, e.g.
+    "85 %") has no num at all. Comparing the leading numeric prefixes keeps eq/ne
+    working for percentage-style metrics instead of silently falling through to
+    a string compare that can never match."""
+    m = re.match(r"\s*(-?\d+(?:\.\d+)?)", text or "")
+    if not m:
+        return False
+    try:
+        return float(m.group(1)) == compare_num
+    except ValueError:
+        return False
+
+
 def rule_matches(rule: RuleRow, value: ParsedValue) -> bool:
     """True if *rule* applies to *value*."""
     op = rule.op
@@ -90,11 +107,15 @@ def rule_matches(rule: RuleRow, value: ParsedValue) -> bool:
         return num is not None and cnum is not None and num <= cnum
     if op == "eq":
         if num is not None and cnum is not None:
-            return num == cnum
+            return num == cnum or _text_num_equal(text, cnum)
+        if cnum is not None:
+            return _text_num_equal(text, cnum)
         return text == rule.value
     if op == "ne":
         if num is not None and cnum is not None:
-            return num != cnum
+            return num != cnum and not _text_num_equal(text, cnum)
+        if cnum is not None:
+            return not _text_num_equal(text, cnum)
         return text != rule.value
     if op == "contains":
         return rule.value in text

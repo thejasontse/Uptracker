@@ -2,7 +2,7 @@
 
 The admin query bar and the dashboard "Views" run user-authored SQL against a
 per-request TEMP table ``nodes_wide`` — one row per node with the columns shown
-in the table (id, label, network_path, status, datasets) PLUS one column per
+in the table (id, label, network_path, tags, status, datasets) PLUS one column per
 distinct metric name (case-insensitive; a node that lacks a metric shows
 ``'N/A'``).
 
@@ -108,7 +108,7 @@ def _build_wide(conn: sqlite3.Connection) -> list[str]:
     """Create TEMP TABLE nodes_wide (node columns + one per metric). Returns
     the ordered list of column names exposed to the user query."""
     metrics = _metric_columns(conn)
-    cols = ["id", "node_id", "label", "network_path",
+    cols = ["id", "node_id", "label", "network_path", "tags",
             "status", "datasets"] + [disp for _, disp in metrics]
 
     coldefs = [
@@ -116,6 +116,7 @@ def _build_wide(conn: sqlite3.Connection) -> list[str]:
         "node_id TEXT",
         "label TEXT",
         "network_path TEXT",
+        "tags TEXT",
         "status TEXT",
         "datasets INTEGER",
     ] + [f"{_q(disp)} TEXT DEFAULT 'N/A'" for _, disp in metrics]
@@ -125,8 +126,8 @@ def _build_wide(conn: sqlite3.Connection) -> list[str]:
     conn.execute(
         """
         INSERT INTO nodes_wide
-            (id, node_id, label, network_path, status, datasets)
-        SELECT n.id, n.id, n.label, n.network_path,
+            (id, node_id, label, network_path, tags, status, datasets)
+        SELECT n.id, n.id, n.label, n.network_path, n.tags,
                COALESCE(sl.name, 'unknown'),
                (SELECT COUNT(*) FROM datasets d WHERE d.node_id = n.id)
         FROM nodes n

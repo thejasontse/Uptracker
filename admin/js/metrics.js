@@ -30,7 +30,7 @@ function draftParamNames() {
 function refreshParams() {
   const names = draftParamNames();
   paintParamFields(
-    document.getElementById('mpParams'),
+    document.getElementById('mpParamsWrap') || document.getElementById('mpParams'),
     document.getElementById('mpParamFields'),
     names, nodeRef, paramValues,
   );
@@ -55,9 +55,12 @@ export function renderMetricsView(body, node, ds, navCtx) {
     ])}
     <p class="muted">Each metric mines the dataset's raw output with a regex capture group.
       Add rules to a metric to turn its value into a status.</p>
-    <div id="mpParams" class="card" hidden>
-      <div class="head"><span class="t">Parameters</span></div>
-      <div id="mpParamFields"></div>
+    <div id="mpParamsWrap" hidden>
+      <div id="mpParams" class="card">
+        <div class="head"><span class="t">Parameters</span></div>
+        <div id="mpParamFields"></div>
+      </div>
+      <hr class="params-hr">
     </div>
     <div class="row"><button id="btnNewMetric" class="small">+ Metric</button>
       <button id="btnTest" class="small">Test run</button></div>

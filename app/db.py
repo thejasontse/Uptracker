@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS nodes (
     id                TEXT PRIMARY KEY,
     label             TEXT NOT NULL,
     network_path      TEXT NOT NULL DEFAULT '',
+    tags              TEXT NOT NULL DEFAULT '',
     status_level_id   INTEGER REFERENCES status_levels(id) ON DELETE SET NULL,
     status_updated_at TEXT,
     created_at        TEXT NOT NULL,
@@ -229,6 +230,7 @@ def init_db() -> None:
         migrate_rename_network_path_token(conn)
         migrate_drop_node_tracking(conn)
         migrate_drop_network_resource_and_clear_templates(conn)
+        migrate_add_node_tags(conn)
         row = conn.execute("SELECT json FROM graph_model WHERE id=1").fetchone()
         if row is None:
             conn.execute(
@@ -371,6 +373,15 @@ def migrate_drop_node_tracking(conn: sqlite3.Connection) -> None:
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(nodes)")}
     if "tracking" in cols:
         conn.execute("ALTER TABLE nodes DROP COLUMN tracking")
+
+
+def migrate_add_node_tags(conn: sqlite3.Connection) -> None:
+    """Add ``nodes.tags`` (comma-separated list of free-form labels) to databases
+    created before the column existed. Tags are editable on the node panel and
+    exposed in the bottom tables / query layer for filtering. Idempotent."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(nodes)")}
+    if "tags" not in cols:
+        conn.execute("ALTER TABLE nodes ADD COLUMN tags TEXT NOT NULL DEFAULT ''")
 
 
 # ``[Network Resource]`` parameter token and its lower-cased param_values key,

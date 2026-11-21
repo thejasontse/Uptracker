@@ -218,6 +218,51 @@ def test_node_patch_metadata(client):
     assert n["network_path"] == "ns1.example.com"
 
 
+# ---------------- node tags ----------------
+def test_node_tags_roundtrip_and_normalization(client):
+    _mk_node(client)
+    # Empty default in the snapshot.
+    assert client.get("/api/snapshot").json()["nodes"][0]["tags"] == ""
+    # PATCH normalizes: trim, drop empties, dedupe case-insensitively.
+    client.patch("/api/nodes/n1", json={"tags": " a, b,,A , "})
+    n = client.get("/api/snapshot").json()["nodes"][0]
+    assert n["tags"] == "a,b"
+    # Clearing works.
+    client.patch("/api/nodes/n1", json={"tags": ""})
+    assert client.get("/api/snapshot").json()["nodes"][0]["tags"] == ""
+
+
+def test_tags_exposed_in_query_layer(client):
+    _mk_nodes(client, [("n1", "web01"), ("n2", "db01")])
+    client.patch("/api/nodes/n1", json={"tags": "web,prod"})
+    cols = client.get("/api/query/columns").json()["columns"]
+    assert "tags" in cols
+    r = client.post("/api/query", json={"sql": "SELECT id FROM nodes_wide WHERE tags LIKE '%prod%'"}).json()
+    assert r["ids"] == ["n1"]
+
+
+def test_add_node_tags_migration(data_dir):
+    """A pre-existing database without ``nodes.tags`` gains the column (empty
+    for existing rows) on the next init. Idempotent."""
+    from app import db
+    db.init_db()  # create the current schema first
+    conn = db.connect()
+    conn.execute("ALTER TABLE nodes DROP COLUMN tags")
+    conn.commit()
+    conn.close()
+    db.init_db()
+    conn = db.connect()
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(nodes)")}
+    assert "tags" in cols
+    conn.execute(
+        "INSERT INTO nodes (id,label,network_path,tags,created_at,updated_at) "
+        "VALUES ('n1','web01','','x,y','2026-01-01T00:00:00+00:00','2026-01-01T00:00:00+00:00')")
+    conn.commit()
+    assert conn.execute("SELECT tags FROM nodes WHERE id='n1'").fetchone()["tags"] == "x,y"
+    conn.close()
+    db.init_db()  # second run is a no-op
+
+
 # ---------------- network resource removal ----------------
 def test_network_resource_column_dropped_on_legacy_db(data_dir):
     """A pre-existing database carrying ``nodes.network_resource`` and a

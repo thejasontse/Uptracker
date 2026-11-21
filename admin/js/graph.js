@@ -10,6 +10,7 @@
 // part of the layout, so painting never triggers a save.
 import { createGraph } from '../vendor/nodegraph.js';
 import { api } from './api.js';
+import { attachPathLinks } from './nodeLinks.js';
 
 let graph = null;
 let dirtyTimer = null;
@@ -48,6 +49,7 @@ export function setOnFlushed(cb) { onFlushedCb = cb; }
 
 export function initGraph(container, onSelect) {
   graph = createGraph(container);
+  attachPathLinks(container); // http(s) network paths become clickable labels
 
   // Persist whenever the rendered model changed (see note above).
   new MutationObserver(scheduleFlush).observe(container, { childList: true, subtree: true });

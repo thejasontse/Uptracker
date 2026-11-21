@@ -111,6 +111,7 @@ function renderTable() {
 
   const ind = (key) => (sortCol === key && sortDir ? (sortDir === 1 ? ' \u25B2' : ' \u25BC') : '');
   thead.innerHTML = `<tr><th data-col="label">Label${ind('label')}</th>` +
+    `<th data-col="tags">Tags${ind('tags')}</th>` +
     `<th data-col="status">Status${ind('status')}</th>` +
     cols.map(([key, name]) => `<th data-col="${esc(key)}">${esc(name)}${ind(key)}</th>`).join('') + '</tr>';
 
@@ -119,10 +120,11 @@ function renderTable() {
 
   // Active column sort: numeric when both values are numbers, text otherwise.
   // Missing values always sort last; ties break by label.
-  if (sortDir && sortCol && (sortCol === 'label' || sortCol === 'status' || names.has(sortCol))) {
+  if (sortDir && sortCol && (sortCol === 'label' || sortCol === 'tags' || sortCol === 'status' || names.has(sortCol))) {
     const byLabel = (a, b) => (a.label || '').localeCompare(b.label || '');
     rows.sort((a, b) => {
       if (sortCol === 'label') return sortDir * byLabel(a, b);
+      if (sortCol === 'tags') return sortDir * ((a.tags || '').localeCompare(b.tags || '')) || byLabel(a, b);
       if (sortCol === 'status') {
         return sortDir * (statusRank(a.status?.name) - statusRank(b.status?.name)) || byLabel(a, b);
       }
@@ -143,7 +145,7 @@ function renderTable() {
     const msg = state.selectedId
       ? 'No nodes match the filter.'
       : 'No nodes in the database.';
-    tbody.innerHTML = `<tr class="empty"><td colspan="${cols.length + 2}" class="muted">${msg}</td></tr>`;
+    tbody.innerHTML = `<tr class="empty"><td colspan="${cols.length + 3}" class="muted">${msg}</td></tr>`;
     return;
   }
   tbody.innerHTML = rows.map((n) => {
@@ -160,6 +162,7 @@ function renderTable() {
     }).join('');
     return '<tr>' +
       `<td>${esc(n.label)}</td>` +
+      `<td>${esc(n.tags || '')}</td>` +
       `<td><span class="dot" style="background:${esc(n.status.color)}"></span> ${esc(n.status.name)}</td>` + cells +
       '</tr>';
   }).join('');

@@ -109,6 +109,23 @@ function homeHtml() {
 }
 
 // ---------------- node detail ----------------
+// Tags used by other nodes, for the Tags input's datalist suggestions (split on
+// comma, trimmed, deduped case-insensitively, first-seen casing wins).
+function tagSuggestions(excludeNodeId) {
+  const seen = new Set();
+  const out = [];
+  for (const other of state.snapshot.nodes) {
+    if (other.id === excludeNodeId) continue;
+    for (const part of String(other.tags || '').split(',')) {
+      const t = part.trim();
+      if (!t || seen.has(t.toLowerCase())) continue;
+      seen.add(t.toLowerCase());
+      out.push(t);
+    }
+  }
+  return out.sort((a, b) => a.localeCompare(b));
+}
+
 function nodeHtml(n) {
   return `
   <div class="section">
@@ -116,14 +133,17 @@ function nodeHtml(n) {
     ${breadcrumb([{ label: 'Datasets' }])}
     <label class="f">Network Path</label>
     <div class="row"><input id="pathIn" value="${esc(n.network_path)}" placeholder="${esc(NETWORK_PATH_PLACEHOLDER)}"><button id="pathSave" class="small">Save</button></div>
+    <label class="f">Tags</label>
+    <div class="row"><input id="tagsIn" list="tagsList" value="${esc(n.tags || '')}" placeholder="comma, separated, tags"><button id="tagsSave" class="small">Save</button></div>
+    <datalist id="tagsList">${tagSuggestions(n.id).map((t) => `<option value="${esc(t)}"></option>`).join('')}</datalist>
+  </div>
+  <div class="section">
+    <h3>Datasets</h3>
     <div class="row">
       <button data-act="addDs" class="primary small">+ Dataset</button>
       <button data-act="templates" class="small">Add dataset from templates</button>
       <button data-act="delNode" class="danger small" style="margin-left:auto">Delete</button>
     </div>
-  </div>
-  <div class="section">
-    <h3>Datasets</h3>
     ${n.datasets.map(datasetCard).join('') || '<p class="muted">No datasets. Add one to start monitoring.</p>'}
   </div>`;
 }
@@ -190,6 +210,11 @@ async function onDockClick(e) {
   const node = state.node(state.selectedId);
   if (e.target.id === 'pathSave' && node) {
     await api.patchNode(node.id, { network_path: document.getElementById('pathIn').value });
+    await refresh();
+    return;
+  }
+  if (e.target.id === 'tagsSave' && node) {
+    await api.patchNode(node.id, { tags: document.getElementById('tagsIn').value });
     await refresh();
     return;
   }

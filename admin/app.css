@@ -43,6 +43,11 @@ main { flex: 1; display: flex; min-height: 0; position: relative; }
    shows the canvas (grid) instead of an opaque body strip. #dock paints above it. */
 #canvas { flex: 1; min-width: 0; margin-right: -14px; }
 
+/* Network-path hyperlinks on node labels (see js/nodeLinks.js): the overlay
+   rect makes the label clickable; the underline marks it as a link. */
+.ng-graph .ng-path-link { cursor: pointer; }
+.ng-graph g.ng-node:has(.ng-path-link) .ng-label { text-decoration: underline; }
+
 /* Dock — mirrors the nodegraph menu/panel surface */
 #dock {
   position: relative;
@@ -195,6 +200,9 @@ button:disabled { opacity: .5; cursor: default; }
 .card { border: 1px solid var(--ng-node-border); border-radius: 6px; padding: 7px 9px; margin: 7px 0; }
 .card .head { display: flex; align-items: center; gap: 6px; }
 .card .head .t { font-weight: 600; flex: 1; }
+/* Rule under the Parameters card (metrics/rules views); hides with its wrapper
+   when the dataset has no [Param] tokens. */
+.params-hr { border: none; border-top: 1px solid var(--ng-node-border); margin: 10px 0; }
 .readings { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 5px 0 2px; font-size: 11px; }
 .readings .reading { white-space: nowrap; }
 .readings .reading b { font-weight: 700; }
