@@ -1,4 +1,4 @@
-// Settings — inline dock view: polling, scheduler, and SMTP.
+// Settings — inline dock view: polling, scheduler, SMTP, and email alert defaults.
 // Status levels are a fixed vocabulary (good/warning/critical/unknown) chosen
 // by rules, so there is nothing to edit here.
 import { api } from './api.js';
@@ -24,8 +24,8 @@ export function renderSettingsView(body, ctx) {
       .map((n) => `<option value="${esc(n)}" ${defStatuses.includes(n) ? 'selected' : ''}>${esc(n)}</option>`).join('');
     host.innerHTML = `
       <label class="f">Dashboard refresh interval (s)</label><input id="s_poll" type="number" value="${esc(s.poll_interval_s || 15)}">
-      <div class="row"><label class="toggle"><input id="s_sched" type="checkbox" ${s.scheduler_enabled === '1' ? 'checked' : ''}> Scheduler enabled</label></div>
-      <div class="row"><label class="toggle"><input id="s_theme" type="checkbox" ${s.theme === 'dark' ? 'checked' : ''}> Dark mode (default for all views)</label></div>
+      <div class="row"><label class="toggle"><input id="s_sched" type="checkbox" ${s.scheduler_enabled === '1' ? 'checked' : ''}> Scheduler enabled</label>
+        <label class="toggle"><input id="s_theme" type="checkbox" ${s.theme === 'dark' ? 'checked' : ''}> Dark mode</label></div>
 
       <h3>Email (SMTP)</h3>
       <div class="row"><div style="flex:2"><label class="f">Host</label><input id="s_host" value="${esc(s.smtp_host || '')}"></div>
@@ -35,9 +35,6 @@ export function renderSettingsView(body, ctx) {
       <div class="row"><label class="toggle"><input id="s_tls" type="checkbox" ${s.smtp_starttls === '1' ? 'checked' : ''}> STARTTLS</label></div>
       <label class="f">From address</label><input id="s_from" value="${esc(s.mail_from || '')}">
 
-      <h3>Email alert defaults</h3>
-      <p class="muted">Pre-fill new email alerts. Subject/body are templates —
-        <code>{{node.label}}</code> <code>{{metric.name}}</code> <code>{{status}}</code> <code>{{value}}</code>.</p>
       <label class="f">Default recipients (comma separated)</label>
       <input id="s_adr" value="${esc(s.alert_default_recipients || '')}">
       <label class="f">Default subject</label>
@@ -47,10 +44,8 @@ export function renderSettingsView(body, ctx) {
       <div class="row">
         <div style="flex:1"><label class="f">Cooldown (s)</label><input id="s_acool" type="number" value="${esc(s.alert_default_cooldown_s || '3600')}"></div>
         <div style="flex:1"><label class="f">Fire after (runs)</label><input id="s_atrig" type="number" min="1" value="${esc(s.alert_default_trigger_count || '1')}"></div>
-      </div>
-      <div class="row">
-        <div style="flex:1"><label class="f">Fire after counts these statuses</label>
-          <select id="s_astatuses" multiple size="4">${optStatuses}</select></div>
+        <div style="flex:2"><label class="f">Qualifying statuses</label>
+          <select id="s_astatuses" multiple size="2" title="Ctrl/Cmd-click to select multiple">${optStatuses}</select></div>
       </div>
 
       <div class="row" style="margin-top:12px"><button id="save" class="primary small">Save</button></div>`;
