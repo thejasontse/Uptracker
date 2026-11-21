@@ -46,8 +46,17 @@ let lastTest = null;     // parsed value entry from the most recent test run
 // in app/rules.py so eq/ne match percentage-style values ("85 %", rule "85%")
 // that never compare equal as raw strings.
 function textNumEqual(text, cnum) {
+  const lead = leadingNum(text);
+  return lead !== null && lead === cnum;
+}
+
+// Leading numeric prefix of *text* as a number ("5%" -> 5), or null. Mirrors
+// _leading_num in app/rules.py: comparison ops fall back to this when the value
+// has no parsed num (str cast, or regex captured "5%"), so units don't break
+// gt/lt/gte/lte/between.
+function leadingNum(text) {
   const m = /^\s*(-?\d+(?:\.\d+)?)/.exec(String(text ?? ''));
-  return m ? parseFloat(m[1]) === cnum : false;
+  return m ? parseFloat(m[1]) : null;
 }
 
 // Client-side mirror of app/rules.py rule_matches(). *value* is a parsed test
@@ -57,7 +66,9 @@ function ruleMatches(op, ruleValue, value) {
   if (op === 'present') return !!(value && !value.error);
   if (!value || value.error) return false;
   const text = value.txt != null ? value.txt : (value.raw || '');
-  const num = typeof value.num === 'number' ? value.num : null;
+  // Mirror backend _coerce: no parsed num -> use the text's leading numeric
+  // prefix so "5%" still evaluates against gt/lt/gte/lte/between rules.
+  const num = typeof value.num === 'number' ? value.num : leadingNum(text);
   const cnum = parseFloat(ruleValue);
   const hasCnum = ruleValue !== '' && !Number.isNaN(cnum);
   switch (op) {
@@ -82,7 +93,8 @@ function ruleMatches(op, ruleValue, value) {
       return op === 'is' ? got === want : got !== want;
     }
     case 'between': {
-      const parts = String(ruleValue).split(',');
+      // Mirror backend _parse_range: comma and/or whitespace separated.
+      const parts = String(ruleValue).trim().split(/[,\s]+/).filter(Boolean);
       if (parts.length !== 2) return false;
       const lo = parseFloat(parts[0]); const hi = parseFloat(parts[1]);
       if (num == null || Number.isNaN(lo) || Number.isNaN(hi)) return false;

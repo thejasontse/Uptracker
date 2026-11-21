@@ -36,8 +36,12 @@ def _as_bool(text: str) -> bool | None:
 
 
 def _parse_range(compare: str) -> tuple[float | None, float | None]:
-    """Parse a ``min,max`` range string into two floats (either may be None)."""
-    parts = (compare or "").split(",")
+    """Parse a ``min,max`` range string into two floats (either may be None).
+
+    The UI hint says "min, max", but users habitually type a plain space
+    instead of the comma ("80 90"), which silently matched nothing. Accept any
+    run of commas and/or whitespace as the separator so both spellings work."""
+    parts = [p for p in re.split(r"[,\s]+", (compare or "").strip()) if p]
     if len(parts) != 2:
         return None, None
     out: list[float | None] = []
@@ -58,15 +62,34 @@ class RuleRow:
     priority: int
 
 
+def _leading_num(text: str) -> float | None:
+    """Return the leading numeric prefix of *text* as a float, or None.
+
+    ``"5%"`` -> 5.0, ``"85 % "`` -> 85.0, ``"abc"`` -> None. Lets comparison
+    operators work on text-captured values that carry a unit suffix."""
+    m = re.match(r"\s*(-?\d+(?:\.\d+)?)", text or "")
+    if not m:
+        return None
+    try:
+        return float(m.group(1))
+    except ValueError:
+        return None
+
+
 def _coerce(value: ParsedValue, compare: str) -> tuple[float | None, str, float | None]:
-    """Return (num, text, compare_num) for a comparison."""
+    """Return (num, text, compare_num) for a comparison.
+
+    When the metric value has no parsed number (e.g. cast ``str``, or a regex
+    that captured "5%" so auto-cast failed), fall back to its leading numeric
+    prefix so gt/lt/gte/lte/between still evaluate percentage-style text."""
     text = value.txt if value.txt is not None else (value.raw or "")
+    num = value.num if value.num is not None else _leading_num(text)
     compare_num: float | None
     try:
         compare_num = float(compare)
     except (TypeError, ValueError):
         compare_num = None
-    return value.num, text, compare_num
+    return num, text, compare_num
 
 
 def _text_num_equal(text: str, compare_num: float) -> bool:
@@ -77,13 +100,8 @@ def _text_num_equal(text: str, compare_num: float) -> bool:
     "85 %") has no num at all. Comparing the leading numeric prefixes keeps eq/ne
     working for percentage-style metrics instead of silently falling through to
     a string compare that can never match."""
-    m = re.match(r"\s*(-?\d+(?:\.\d+)?)", text or "")
-    if not m:
-        return False
-    try:
-        return float(m.group(1)) == compare_num
-    except ValueError:
-        return False
+    lead = _leading_num(text)
+    return lead is not None and lead == compare_num
 
 
 def rule_matches(rule: RuleRow, value: ParsedValue) -> bool:

@@ -74,6 +74,27 @@ def test_rule_eq_ne_numeric_with_unit_text():
     assert not rule_matches(_rule("eq", "85"), up)
 
 
+def test_rule_comparisons_with_unit_text():
+    # Disk-usage style metrics captured as "5%" / "85 %": auto-cast yields no
+    # num, so gt/lt/gte/lte/between must fall back to the leading numeric
+    # prefix instead of silently matching nothing (status stuck unknown).
+    pct = extract("5%", r"(\d+%)", 1, "auto")        # num None
+    assert rule_matches(_rule("gte", "0"), pct)
+    assert rule_matches(_rule("lte", "80"), pct)
+    assert not rule_matches(_rule("gt", "80"), pct)
+    assert rule_matches(_rule("between", "0, 80"), pct)
+    space = extract("85 %", r"(\d+ ?%)", 1, "auto")  # unit with a space
+    assert rule_matches(_rule("gt", "80"), space)
+    assert not rule_matches(_rule("lt", "80"), space)
+    neg = extract("-3%", r"(-?\d+%)", 1, "auto")
+    assert rule_matches(_rule("lt", "0"), neg)
+    strv = extract("5", r"(\d+)", 1, "str")          # cast=str: num None
+    assert rule_matches(_rule("lte", "80"), strv)
+    # Non-numeric text still never matches a numeric comparison.
+    up = extract("UP", r"(\w+)", 1, "auto")
+    assert not rule_matches(_rule("gt", "0"), up)
+
+
 def test_rule_missing_present():
     v = extract("nope", r"rtt=(\d+)")
     assert rule_matches(_rule("missing", ""), v)
@@ -110,6 +131,14 @@ def test_rule_between_range():
     # A malformed range (not exactly two numbers) never matches.
     assert not rule_matches(_rule("between", "40"), v)
     assert not rule_matches(_rule("between", "abc,def"), v)
+
+
+def test_rule_between_space_separated():
+    # Users type "80 90" as often as "80,90"; both must parse identically.
+    v = extract("temp 50", r"(\d+)", 1, "auto")
+    assert rule_matches(_rule("between", "40 60"), v)
+    assert rule_matches(_rule("between", "40 , 60"), v)
+    assert not rule_matches(_rule("between", "60 70"), v)
 
 
 def test_evaluate_metric_worst_status_wins():
