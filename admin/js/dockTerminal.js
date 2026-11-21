@@ -5,13 +5,11 @@
 // so the terminal always reflects what the operator just tested.
 let headerEl = null;
 let rawEl = null;
-let parsedEl = null;
 
 function ensureElements() {
-  if (headerEl && rawEl && parsedEl) return;
+  if (headerEl && rawEl) return;
   headerEl = document.getElementById('dockTerminalHeader');
   rawEl = document.getElementById('dockTerminalRaw');
-  parsedEl = document.getElementById('dockTerminalParsed');
 }
 
 function timestamp() {
@@ -29,34 +27,36 @@ export function clearTerminal() {
   ensureElements();
   if (headerEl) headerEl.textContent = '';
   if (rawEl) rawEl.textContent = '';
-  if (parsedEl) parsedEl.innerHTML = '';
 }
 
-// Render a /api/test/run response: timestamped header line, raw stdout/stderr,
-// and a small table of parsed metric values. ``source`` labels which page ran
-// the test (e.g. "dataset editor", "metrics", "rules").
+// Render a /api/test/run response into the terminal: timestamped header line,
+// raw stdout/stderr, and an aligned metric/value block printed inline below the
+// raw output (inside the same <pre>, not in a separate table). ``source`` labels
+// which page ran the test (e.g. "dataset editor", "metrics", "rules").
 export function showTestResult(res, source) {
   ensureElements();
   const status = res.ok ? 'ok' : (res.error || 'failed');
   if (headerEl) headerEl.textContent = `${timestamp()} — ${source} — ${status}`;
-  if (rawEl) rawEl.textContent = res.raw || '(no output)';
-  if (!parsedEl) return;
+  if (!rawEl) return;
+  let text = res.raw || '(no output)';
   const parsed = res.parsed || [];
-  if (!parsed.length) { parsedEl.innerHTML = ''; return; }
-  parsedEl.innerHTML = `
-    <table class="term-parsed">
-      <thead><tr><th>metric</th><th>value</th></tr></thead>
-      <tbody>${parsed.map((p) => `<tr><td>${escapeHtml(p.name)}</td><td>${formatParsed(p)}</td></tr>`).join('')}</tbody>
-    </table>`;
+  if (parsed.length) text += '\n\n' + renderParsed(parsed);
+  rawEl.textContent = text;
+}
+
+// Build an aligned two-column "metric / value" plain-text block for the terminal.
+function renderParsed(parsed) {
+  const rows = parsed.map((p) => [String(p.name ?? ''), formatParsed(p)]);
+  const nameWidth = Math.max('metric'.length, ...rows.map(([n]) => n.length));
+  const pad = (s, w) => s + ' '.repeat(Math.max(0, w - s.length));
+  const lines = ['── metrics ──', `${pad('metric', nameWidth)}  value`];
+  for (const [name, value] of rows) lines.push(`${pad(name, nameWidth)}  ${value}`);
+  return lines.join('\n');
 }
 
 function formatParsed(p) {
-  if (p.error) return `<span class="err">${escapeHtml(p.error)}</span>`;
-  const shown = p.txt != null && p.txt !== '' ? p.txt : (p.num != null ? String(p.num) : '');
-  return escapeHtml(shown);
-}
-
-function escapeHtml(s) {
-  if (s == null) return '';
-  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  if (p.error) return `(error: ${p.error})`;
+  if (p.txt != null && p.txt !== '') return String(p.txt);
+  if (p.num != null) return String(p.num);
+  return '';
 }

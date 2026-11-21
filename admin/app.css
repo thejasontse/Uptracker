@@ -95,10 +95,6 @@ main { flex: 1; display: flex; min-height: 0; position: relative; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 #dockTerminalRaw { flex: 1; min-height: 0; max-height: none; margin: 8px; }
-#dockTerminalParsed { flex: none; padding: 0 8px 8px; font-size: 11px; }
-.term-parsed { width: 100%; border-collapse: collapse; }
-.term-parsed th, .term-parsed td { text-align: left; padding: 2px 6px; font-weight: normal; }
-.term-parsed th { color: var(--ng-muted); font-size: 10px; }
 
 /* Folder tabs — the home view's primary navigation (settings/credentials/
    import/export). The active tab shares the content surface's background and
