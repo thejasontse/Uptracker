@@ -237,7 +237,7 @@ def init_db() -> None:
                 "INSERT INTO graph_model (id, json) VALUES (1, ?)",
                 [json.dumps({"version": 1, "nodes": [], "edges": [], "groups": []})],
             )
-        _seed_demo(conn)
+        _seed_default_templates(conn)
 
 
 def _migrate_credentials_rekey(conn: sqlite3.Connection) -> None:
@@ -690,279 +690,54 @@ def sync_nodes(conn: sqlite3.Connection, model: dict[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Demo seed (localhost node with system metrics + rules)
+# Bundled default templates seed
 # ---------------------------------------------------------------------------
-# One entry per dataset. Each dataset is a bash script run on the server host;
-# its ``metrics`` extract named values via regex and attach status rules. Rule
-# ``level`` names are resolved to status_level ids at seed time (never
-# hardcoded). Evaluation is worst-wins, so a ``present``->good rule coexists
-# safely with numeric ``gt``->warning/critical rules on the same metric.
-DEMO_DATASETS: list[dict[str, Any]] = [
-    {
-        # One command, several labelled metrics: OS / kernel / hostname.
-        "name": "system info",
-        "script": (
-            'grep ^PRETTY_NAME= /etc/os-release | cut -d\'"\' -f2 | sed \'s/^/os:/\'; '
-            'printf \'kernel:%s\\n\' "$(uname -r)"; '
-            'printf \'hostname:%s\\n\' "$(hostname)"'
-        ),
-        "timeout_s": 10,
-        "metrics": [
-            {
-                "name": "os",
-                "regex": r"(?m)^os:(.+)$",
-                "group_index": 1,
-                "cast": "str",
-                "unit": "",
-                "rules": [{"op": "present", "value": "", "level": "good"}],
-            },
-            {
-                "name": "kernel",
-                "regex": r"(?m)^kernel:(.+)$",
-                "group_index": 1,
-                "cast": "str",
-                "unit": "",
-                "rules": [{"op": "present", "value": "", "level": "good"}],
-            },
-            {
-                "name": "hostname",
-                "regex": r"(?m)^hostname:(.+)$",
-                "group_index": 1,
-                "cast": "str",
-                "unit": "",
-                "rules": [{"op": "present", "value": "", "level": "good"}],
-            },
-        ],
-    },
-    {
-        # One command (/proc/loadavg), three load-average metrics.
-        "name": "cpu load",
-        "script": "cat /proc/loadavg",
-        "timeout_s": 10,
-        "metrics": [
-            {
-                "name": "load1",
-                "regex": r"([0-9.]+)\s+[0-9.]+\s+[0-9.]+",
-                "group_index": 1,
-                "cast": "float",
-                "unit": "load",
-                "rules": [
-                    {"op": "gt", "value": "8", "level": "critical"},
-                    {"op": "gt", "value": "4", "level": "warning"},
-                    {"op": "present", "value": "", "level": "good"},
-                ],
-            },
-            {
-                "name": "load5",
-                "regex": r"[0-9.]+\s+([0-9.]+)\s+[0-9.]+",
-                "group_index": 1,
-                "cast": "float",
-                "unit": "load",
-                "rules": [{"op": "present", "value": "", "level": "good"}],
-            },
-            {
-                "name": "load15",
-                "regex": r"[0-9.]+\s+[0-9.]+\s+([0-9.]+)",
-                "group_index": 1,
-                "cast": "float",
-                "unit": "load",
-                "rules": [{"op": "present", "value": "", "level": "good"}],
-            },
-        ],
-    },
-    {
-        # One command (free), labelled memory metrics in bytes.
-        "name": "memory usage",
-        "script": (
-            "free -b | awk '/^Mem:/{print \"total:\" $2; print \"used:\" $3; "
-            "print \"free:\" $4; print \"available:\" $7}'"
-        ),
-        "timeout_s": 10,
-        "metrics": [
-            {
-                "name": "total_bytes",
-                "regex": r"(?m)^total:([0-9]+)",
-                "group_index": 1,
-                "cast": "int",
-                "unit": "B",
-                "rules": [{"op": "present", "value": "", "level": "good"}],
-            },
-            {
-                "name": "used_bytes",
-                "regex": r"(?m)^used:([0-9]+)",
-                "group_index": 1,
-                "cast": "int",
-                "unit": "B",
-                "rules": [{"op": "present", "value": "", "level": "good"}],
-            },
-            {
-                "name": "free_bytes",
-                "regex": r"(?m)^free:([0-9]+)",
-                "group_index": 1,
-                "cast": "int",
-                "unit": "B",
-                "rules": [{"op": "present", "value": "", "level": "good"}],
-            },
-            {
-                "name": "available_bytes",
-                "regex": r"(?m)^available:([0-9]+)",
-                "group_index": 1,
-                "cast": "int",
-                "unit": "B",
-                "rules": [
-                    {"op": "lt", "value": "134217728", "level": "critical"},
-                    {"op": "lt", "value": "536870912", "level": "warning"},
-                    {"op": "present", "value": "", "level": "good"},
-                ],
-            },
-        ],
-    },
-    {
-        # One command (df), labelled disk metrics for the root filesystem.
-        "name": "disk usage",
-        "script": (
-            "df -P / | awk 'NR==2{gsub(/%/,\"\",$5); print \"total_kb:\" $2; "
-            "print \"used_kb:\" $3; print \"avail_kb:\" $4; print \"used_pct:\" $5}'"
-        ),
-        "timeout_s": 10,
-        "metrics": [
-            {
-                "name": "total_kb",
-                "regex": r"(?m)^total_kb:([0-9]+)",
-                "group_index": 1,
-                "cast": "int",
-                "unit": "KB",
-                "rules": [{"op": "present", "value": "", "level": "good"}],
-            },
-            {
-                "name": "used_kb",
-                "regex": r"(?m)^used_kb:([0-9]+)",
-                "group_index": 1,
-                "cast": "int",
-                "unit": "KB",
-                "rules": [{"op": "present", "value": "", "level": "good"}],
-            },
-            {
-                "name": "avail_kb",
-                "regex": r"(?m)^avail_kb:([0-9]+)",
-                "group_index": 1,
-                "cast": "int",
-                "unit": "KB",
-                "rules": [{"op": "present", "value": "", "level": "good"}],
-            },
-            {
-                "name": "used_pct",
-                "regex": r"(?m)^used_pct:([0-9]+)",
-                "group_index": 1,
-                "cast": "int",
-                "unit": "%",
-                "rules": [
-                    {"op": "gt", "value": "90", "level": "critical"},
-                    {"op": "gt", "value": "80", "level": "warning"},
-                    {"op": "present", "value": "", "level": "good"},
-                ],
-            },
-        ],
-    },
-    {
-        # Network reachability stays its own dataset (a distinct probe, not OS info).
-        "name": "ping localhost",
-        "script": "ping -c1 -W2 localhost",
-        "timeout_s": 10,
-        "metrics": [
-            {
-                "name": "rtt",
-                "regex": r"time[=<]\s*([0-9.]+)",
-                "group_index": 1,
-                "cast": "float",
-                "unit": "ms",
-                "rules": [
-                    {"op": "missing", "value": "", "level": "critical"},
-                    {"op": "gt", "value": "500", "level": "critical"},
-                    {"op": "gt", "value": "100", "level": "warning"},
-                    {"op": "present", "value": "", "level": "good"},
-                ],
-            }
-        ],
-    },
-]
+def _seed_default_templates(conn: sqlite3.Connection) -> None:
+    """Insert the bundled dataset templates (``templates.DEFAULT_TEMPLATES``)
+    into a database that has never been seeded with them.
 
+    A one-time marker setting (``default_templates_seeded``) makes this run
+    exactly once per database: after the first seed, deletions stick across
+    restarts and user edits are never overwritten. Rule ``level`` names in the
+    payloads are resolved to ``status_levels`` ids at seed time (never
+    hardcoded); unknown level names drop that rule."""
+    from . import templates as tpl_mod
 
-def _seed_demo(conn: sqlite3.Connection) -> None:
-    """Seed a demo ``localhost`` node with system datasets/metrics/rules.
-
-    Only runs when ``SM_SEED_DEMO`` is set (so pytest fixtures, which create
-    fresh databases, stay clean) and the database has no nodes yet — i.e. on
-    first boot of a real instance. Idempotent: a second boot finds existing
-    nodes and does nothing."""
-    if not os.environ.get("SM_SEED_DEMO"):
-        return
-    if conn.execute("SELECT COUNT(*) c FROM nodes").fetchone()["c"]:
+    if get_setting(conn, "default_templates_seeded") == "1":
         return
     levels = {
         r["name"]: r["id"]
         for r in conn.execute("SELECT id, name FROM status_levels").fetchall()
     }
-    if not {"good", "warning", "critical"} <= set(levels):
-        return
-
-    node_id = "localhost"
     now = now_iso()
-    conn.execute(
-        "INSERT INTO nodes (id, label, network_path, created_at, updated_at) "
-        "VALUES (?,?,?,?,?)",
-        (node_id, "localhost", "localhost", now, now),
-    )
-
-    # Add the node to the graph layout so the admin canvas renders it.
-    model = get_graph_json(conn)
-    if not any(n.get("id") == node_id for n in model.get("nodes", [])):
-        model.setdefault("nodes", []).append(
-            {"id": node_id, "label": "localhost", "x": 0, "y": 0, "params": []}
+    for spec in tpl_mod.DEFAULT_TEMPLATES:
+        payload = _resolve_template_levels(spec["payload"], levels)
+        conn.execute(
+            """INSERT INTO templates (name, template_type, payload, created_at) VALUES (?,?,?,?)
+               ON CONFLICT(name) DO NOTHING""",
+            (spec["name"], "dataset", json.dumps(payload), now),
         )
-        set_graph_json(conn, model)
+    set_setting(conn, "default_templates_seeded", "1")
 
-    for spec in DEMO_DATASETS:
-        cur = conn.execute(
-            "INSERT INTO datasets (node_id, name, method, script, timeout_s, "
-            "interval_s, enabled, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
-            (
-                node_id,
-                spec["name"],
-                "bash",
-                spec["script"],
-                spec.get("timeout_s", 30),
-                spec.get("interval_s", 600),
-                1,
-                now,
-                now,
-            ),
-        )
-        ds_id = cur.lastrowid
-        for m in spec["metrics"]:
-            mcur = conn.execute(
-                "INSERT INTO metrics (dataset_id, name, regex, group_index, cast, "
-                "unit, created_at) VALUES (?,?,?,?,?,?,?)",
-                (
-                    ds_id,
-                    m["name"],
-                    m["regex"],
-                    m.get("group_index", 1),
-                    m.get("cast", "auto"),
-                    m.get("unit", ""),
-                    now,
-                ),
-            )
-            metric_id = mcur.lastrowid
-            for r in m.get("rules", []):
-                conn.execute(
-                    "INSERT INTO rules (metric_id, op, value, status_level_id, "
-                    "priority) VALUES (?,?,?,?,?)",
-                    (
-                        metric_id,
-                        r["op"],
-                        r.get("value", ""),
-                        levels[r["level"]],
-                        r.get("priority", 0),
-                    ),
-                )
+
+def _resolve_template_levels(payload: dict, levels: dict) -> dict:
+    """Return a deep copy of *payload* with each rule's ``level`` name replaced
+    by the matching ``status_level_id``. Rules whose level name is unknown are
+    dropped."""
+    out = dict(payload)
+    metrics = []
+    for m in payload.get("metrics", []):
+        mm = dict(m)
+        rules = []
+        for r in m.get("rules", []):
+            rr = {k: v for k, v in r.items() if k != "level"}
+            level_id = levels.get(r.get("level"))
+            if level_id is None:
+                continue
+            rr["status_level_id"] = level_id
+            rules.append(rr)
+        mm["rules"] = rules
+        metrics.append(mm)
+    out["metrics"] = metrics
+    return out
+

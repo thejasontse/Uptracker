@@ -254,3 +254,27 @@ def apply_dataset_template(
                 (mid, r.get("op", "missing"), _r(r.get("value", "")), r.get("status_level_id"), r.get("priority", 0)),
             )
     return {"dataset_id": ds_id, "name": ds_name}
+
+
+# ---------------------------------------------------------------------------
+# Bundled default templates
+# ---------------------------------------------------------------------------
+# Dataset templates shipped with the app and seeded into every new database by
+# ``db._seed_default_templates``. Rule levels are stored by *name* (resolved to
+# ``status_levels`` ids at seed time, never hardcoded). Users can edit or delete
+# them freely — seeding only inserts names that do not exist yet, so deletions
+# stick across restarts and user edits survive.
+DEFAULT_TEMPLATES: list[dict[str, Any]] = [
+    {
+        "name": 'WinOS Disks',
+        "payload": {'name': 'Disks', 'method': 'powershell', 'script': '$ComputerName = "[label]"\n\n$IsLocal = $ComputerName -in @("localhost", "127.0.0.1", ".", $env:COMPUTERNAME)\n\nif ($IsLocal) {\n    $Disks = Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DriveType=3"\n} else {\n    try {\n        $Session = New-CimSession -ComputerName $ComputerName -ErrorAction Stop\n    } catch {\n        $DcomOpt = New-CimSessionOption -Protocol Dcom\n        $Session = New-CimSession -ComputerName $ComputerName -SessionOption $DcomOpt -ErrorAction Stop\n    }\n\n    $Disks = Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DriveType=3" -CimSession $Session\n    Remove-CimSession -CimSession $Session\n}\n\n$Metrics = foreach ($Disk in $Disks) {\n    if ($Disk.Size -gt 0) {\n        $Drive   = $Disk.DeviceID.TrimEnd(\':\')\n        $TotalGB = [math]::Round($Disk.Size / 1GB, 2)\n        $UsedPct = [math]::Round((($Disk.Size - $Disk.FreeSpace) / $Disk.Size) * 100, 1)\n        \n        "${Drive}_Capacity_GB=$TotalGB"\n        "${Drive}_Used_Pct=$UsedPct"\n    }\n}\n\n$Metrics -join "|"', 'timeout_s': 120, 'interval_s': 600, 'metrics': [{'name': 'Disk (C) Total', 'regex': 'C_Capacity_GB=([\\d.]+)', 'group_index': 1, 'cast': 'float', 'unit': ' GB', 'rules': []}, {'name': 'Disk (C) Used', 'regex': 'C_Used_Pct=([\\d.]+)', 'group_index': 1, 'cast': 'float', 'unit': '%', 'rules': [{'op': 'lt', 'value': '80', 'priority': 0, 'level': 'good'}, {'op': 'between', 'value': '80,90', 'priority': 0, 'level': 'warning'}, {'op': 'gte', 'value': '90', 'priority': 0, 'level': 'critical'}]}, {'name': 'Disk (D) Total', 'regex': 'D_Capacity_GB=([\\d.]+)', 'group_index': 1, 'cast': 'float', 'unit': ' GB', 'rules': []}, {'name': 'Disk (D) Used', 'regex': 'D_Used_Pct=([\\d.]+)', 'group_index': 1, 'cast': 'float', 'unit': '%', 'rules': [{'op': 'lt', 'value': '80', 'priority': 0, 'level': 'good'}, {'op': 'between', 'value': '80,90', 'priority': 0, 'level': 'warning'}, {'op': 'gte', 'value': '90', 'priority': 0, 'level': 'critical'}]}]},
+    },
+    {
+        "name": 'WinOS OS/CPU/RAM',
+        "payload": {'name': 'OS/CPU/RAM', 'method': 'powershell', 'script': '$ComputerName = "[label]"\n\n$IsLocal = $ComputerName -in @("localhost", "127.0.0.1", ".", $env:COMPUTERNAME)\n\nif ($IsLocal) {\n    # Query local WMI directly without WinRM\n    $OS  = Get-CimInstance -ClassName Win32_OperatingSystem\n    $CPU = Get-CimInstance -ClassName Win32_Processor\n    $CS  = Get-CimInstance -ClassName Win32_ComputerSystem\n} else {\n    try {\n        $Session = New-CimSession -ComputerName $ComputerName -ErrorAction Stop\n    } catch {\n        $DcomOpt = New-CimSessionOption -Protocol Dcom\n        $Session = New-CimSession -ComputerName $ComputerName -SessionOption $DcomOpt -ErrorAction Stop\n    }\n\n    $OS  = Get-CimInstance -ClassName Win32_OperatingSystem -CimSession $Session\n    $CPU = Get-CimInstance -ClassName Win32_Processor -CimSession $Session\n    $CS  = Get-CimInstance -ClassName Win32_ComputerSystem -CimSession $Session\n    Remove-CimSession -CimSession $Session\n}\n\n$OSName   = $OS.Caption.Trim()\n$CpuCores = ($CPU | Measure-Object -Property NumberOfCores -Sum).Sum\n$RamGB    = [math]::Round($CS.TotalPhysicalMemory / 1GB, 2)\n\n"OS=$OSName|Cores=$CpuCores|RAM_GB=$RamGB"', 'timeout_s': 120, 'interval_s': 604800, 'metrics': [{'name': 'OS', 'regex': 'OS=([^|\\r\\n]+)', 'group_index': 1, 'cast': 'str', 'unit': '', 'rules': []}, {'name': 'CPU Cores', 'regex': 'Cores=(\\d+)', 'group_index': 1, 'cast': 'int', 'unit': '', 'rules': []}, {'name': 'Memory', 'regex': 'RAM_GB=([\\d.]+)', 'group_index': 1, 'cast': 'float', 'unit': ' GB', 'rules': []}]},
+    },
+    {
+        "name": 'WinOS Ping',
+        "payload": {'name': 'Ping', 'method': 'cmd', 'script': 'ping -4 -n 1 [label] | findstr TTL >nul && echo True || echo False', 'timeout_s': 30, 'interval_s': 600, 'metrics': [{'name': 'Ping', 'regex': '(.*)', 'group_index': 1, 'cast': 'bool', 'unit': '', 'rules': [{'op': 'is', 'value': 'True', 'priority': 0, 'level': 'good'}, {'op': 'is', 'value': 'False', 'priority': 0, 'level': 'critical'}]}]},
+    },
+]

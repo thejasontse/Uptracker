@@ -210,6 +210,38 @@ def test_template_apply_missing_params(client):
     assert client.get("/api/snapshot").json()["nodes"][0]["datasets"] == []
 
 
+# ---------------- bundled default templates seed ----------------
+def test_default_templates_seeded_once_and_deletions_stick(client, data_dir):
+    """``init_db`` seeds the three bundled WinOS dataset templates exactly once;
+    deleting one is permanent across restarts and edits are never overwritten."""
+    from app import db
+
+    names = {t["name"] for t in client.get("/api/templates").json()["templates"]}
+    assert names == {"WinOS Ping", "WinOS OS/CPU/RAM", "WinOS Disks"}
+
+    # Editing a bundled template survives further boots.
+    tpl = next(t for t in client.get("/api/templates").json()["templates"] if t["name"] == "WinOS Ping")
+    edited = dict(tpl["payload"], name="Ping Edited")
+    client.post("/api/templates", json={"name": "WinOS Ping",
+                                        "template_type": "dataset", "payload": edited})
+
+    # Deleting one is permanent.
+    other = next(t for t in client.get("/api/templates").json()["templates"] if t["name"] == "WinOS Disks")
+    assert client.delete(f"/api/templates/{other['id']}").status_code == 200
+
+    db.init_db()  # simulated restart: no re-seed, edit kept, deletion sticks
+    after = {t["name"]: t for t in client.get("/api/templates").json()["templates"]}
+    assert set(after) == {"WinOS Ping", "WinOS OS/CPU/RAM"}
+    assert after["WinOS Ping"]["payload"]["name"] == "Ping Edited"
+
+    # Rules were resolved by level name to real status_level ids at seed time.
+    with db.db_conn() as conn:
+        levels = {r["id"]: r["name"] for r in
+                  conn.execute("SELECT id, name FROM status_levels")}
+    ping = next(m for m in after["WinOS Ping"]["payload"]["metrics"] if m["name"] == "Ping")
+    assert {levels[r["status_level_id"]] for r in ping["rules"]} == {"good", "critical"}
+
+
 # ---------------- node patch ----------------
 def test_node_patch_metadata(client):
     _mk_node(client)
@@ -276,6 +308,8 @@ def test_network_resource_column_dropped_on_legacy_db(data_dir):
     db.init_db()  # create the current schema (no network_resource column)
     with db.db_conn() as conn:
         # Re-add the legacy column to simulate an older database.
+        # The bundled default templates are seeded on every boot, so after the
+        # migration only those three remain (the legacy one is deleted).
         conn.execute("ALTER TABLE nodes ADD COLUMN network_resource TEXT")
         for nid, res in (("a", "dns_alias"), ("b", "file_share"), ("c", "vm")):
             conn.execute(
@@ -296,9 +330,14 @@ def test_network_resource_column_dropped_on_legacy_db(data_dir):
     with db.db_conn() as conn:
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(nodes)")}
         assert "network_resource" not in cols
-        assert conn.execute(
-            "SELECT COUNT(*) c FROM templates WHERE template_type='dataset'"
-        ).fetchone()["c"] == 0
+        dataset_templates = conn.execute(
+            "SELECT name FROM templates WHERE template_type='dataset'"
+        ).fetchall()
+        names = {r["name"] for r in dataset_templates}
+        assert "t-legacy" not in names  # legacy template removed
+        # The one-time seed marker means the migration's wipe of dataset
+        # templates is not re-seeded on subsequent boots.
+        assert names == set()
         script = conn.execute("SELECT script FROM datasets").fetchone()["script"]
         assert "[Network Resource]" not in script
         assert "{{node.network_resource}}" not in script
