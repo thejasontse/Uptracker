@@ -6,8 +6,7 @@ import { api } from './api.js';
 import { state } from './state.js';
 import { breadcrumb, esc, toast } from './util.js';
 import {
-  scanParams, paramValueMap, substituteParams, missingParams, customParamValues,
-  paintParamFields, attachParamAutocomplete,
+  scanParams, missingParams, customParamValues, attachParamAutocomplete,
 } from './params.js';
 import { showTestResult } from './dockTerminal.js';
 
@@ -25,15 +24,6 @@ function draftParamNames() {
   const texts = [dataset && dataset.script];
   for (const m of draft) texts.push(m.name, m.regex, m.unit);
   return scanParams(texts.filter((t) => typeof t === 'string'));
-}
-
-function refreshParams() {
-  const names = draftParamNames();
-  paintParamFields(
-    document.getElementById('mpParamsWrap') || document.getElementById('mpParams'),
-    document.getElementById('mpParamFields'),
-    names, nodeRef, paramValues,
-  );
 }
 
 export function renderMetricsView(body, node, ds, navCtx) {
@@ -55,13 +45,6 @@ export function renderMetricsView(body, node, ds, navCtx) {
     ])}
     <p class="muted">Each metric mines the dataset's raw output with a regex capture group.
       Add rules to a metric to turn its value into a status.</p>
-    <div id="mpParamsWrap" hidden>
-      <div id="mpParams" class="card">
-        <div class="head"><span class="t">Parameters</span></div>
-        <div id="mpParamFields"></div>
-      </div>
-      <hr class="params-hr">
-    </div>
     <div class="row"><button id="btnNewMetric" class="small">+ Metric</button>
       <button id="btnTest" class="small">Test run</button></div>
     <div id="metricList"></div>
@@ -72,11 +55,9 @@ export function renderMetricsView(body, node, ds, navCtx) {
   </div>`;
 
   renderMetrics();
-  refreshParams();
   body.querySelector('#btnNewMetric').onclick = () => {
     draft.push({ id: null, name: 'metric', regex: 'value=(\\d+)', group_index: 1, cast: 'auto', unit: '', rules: [], alert: null });
     renderMetrics();
-    refreshParams();
   };
   body.querySelector('#btnTest').onclick = () => testRun();
   body.querySelector('#btnSave').onclick = async () => {
@@ -106,7 +87,7 @@ function metricCard(m, i) {
   const testVal = t
     ? (t.error ? `<span class="err">${esc(t.error)}</span>` : `<b>${esc(t.txt ?? t.num ?? '—')}</b>${esc(m.unit || '')}`)
     : '';
-  const testLine = t ? `<div class="kv"><span class="k">last test</span><span>${testVal}</span></div>` : '';
+  const testLine = t ? `<div class="kv kv-left"><span class="k">Test result = </span><span>${testVal}</span></div>` : '';
   const ruleCount = m.rules.length;
   return `
   <div class="card">
@@ -131,12 +112,11 @@ function renderMetrics() {
   list.querySelectorAll('[data-field]').forEach((el) => {
     el.onchange = () => { draft[Number(el.dataset.mi)][el.dataset.field] = el.type === 'number' ? Number(el.value) : el.value; };
   });
-  // [Param] autocomplete on the free-text fields; picking a token re-scans so
-  // its value input appears in the Parameters panel.
+  // [Param] autocomplete on the free-text fields; picking a token inserts it.
   list.querySelectorAll('[data-field="name"], [data-field="regex"], [data-field="unit"]').forEach((el) => {
-    attachParamAutocomplete(el, () => refreshParams());
+    attachParamAutocomplete(el, () => {});
   });
-  list.querySelectorAll('[data-del]').forEach((el) => { el.onclick = () => { draft.splice(Number(el.dataset.mi), 1); renderMetrics(); refreshParams(); }; });
+  list.querySelectorAll('[data-del]').forEach((el) => { el.onclick = () => { draft.splice(Number(el.dataset.mi), 1); renderMetrics(); }; });
   list.querySelectorAll('[data-rules]').forEach((el) => {
     el.onclick = async () => {
       const mi = Number(el.dataset.mi);
@@ -156,7 +136,6 @@ async function testRun() {
   const missing = missingParams(draftParamNames(), nodeRef, paramValues);
   if (missing.length) {
     toast('Fill parameter' + (missing.length > 1 ? 's' : '') + ': ' + missing.join(', '), 'error');
-    refreshParams();
     return;
   }
   // The dry-run endpoint resolves [Param] tokens server-side (node-derived

@@ -7,8 +7,7 @@ import { api } from './api.js';
 import { state } from './state.js';
 import { breadcrumb, esc, toast, RULE_STATUSES } from './util.js';
 import {
-  scanParams, paramValueMap, missingParams,
-  paintParamFields, attachParamAutocomplete,
+  scanParams, paramValueMap, missingParams, attachParamAutocomplete,
 } from './params.js';
 import { showTestResult } from './dockTerminal.js';
 
@@ -119,14 +118,6 @@ function testParamNames() {
   return scanParams(texts.filter((t) => typeof t === 'string'));
 }
 
-function refreshParams() {
-  paintParamFields(
-    document.getElementById('rpParamsWrap') || document.getElementById('rpParams'),
-    document.getElementById('rpParamFields'),
-    testParamNames(), nodeRef, paramValues,
-  );
-}
-
 // The three assignable statuses (unknown is the fallback, never chosen here).
 // Sorted by rank so "warning" — not whichever row happens to come first in the
 // snapshot (which is ordered by rank too, but unknown sits at rank 0) — is the
@@ -162,13 +153,6 @@ export function renderRulesView(body, node, ds, metricRow, navCtx) {
     ])}
     <p class="muted">A rule sets the metric's status when its value matches. Highest priority wins;
       ties go to the worse status. No matching rule → <b>unknown</b>.</p>
-    <div id="rpParamsWrap" hidden>
-      <div id="rpParams" class="card">
-        <div class="head"><span class="t">Parameters</span></div>
-        <div id="rpParamFields"></div>
-      </div>
-      <hr class="params-hr">
-    </div>
     <div class="row"><button id="btnAddRule" class="small">+ Rule</button>
       <button id="btnTestRules" class="small">Test rules</button></div>
     <div class="rule-grid rule-head"><span>When</span><span>Value</span><span></span><span>Status</span><span></span></div>
@@ -182,11 +166,9 @@ export function renderRulesView(body, node, ds, metricRow, navCtx) {
 
   renderRules();
   renderAlert();
-  refreshParams();
   body.querySelector('#btnAddRule').onclick = () => {
     draft.rules.push({ id: null, op: 'gt', value: '', status_level_id: assignableLevels()[0]?.id ?? 1, priority: 0 });
     renderRules();
-    refreshParams();
   };
   body.querySelector('#btnTestRules').onclick = () => testRules();
   body.querySelector('#btnSave').onclick = () => save();
@@ -225,13 +207,13 @@ function renderRules() {
       r[field] = (field === 'status_level_id' || el.type === 'number') ? Number(el.value) : el.value;
       // Changing the operator can toggle the value field (missing/present) or
       // reveal the between hint, so repaint the row list.
-      if (el.dataset.rulefield === 'op') { renderRules(); refreshParams(); }
+      if (el.dataset.rulefield === 'op') { renderRules(); }
     };
   });
   // A rule's threshold can be a [Param] token, resolved at collection time.
-  list.querySelectorAll('[data-rulefield="value"]').forEach((el) => attachParamAutocomplete(el, () => refreshParams()));
+  list.querySelectorAll('[data-rulefield="value"]').forEach((el) => attachParamAutocomplete(el, () => {}));
   list.querySelectorAll('[data-delrule]').forEach((el) => {
-    el.onclick = () => { draft.rules.splice(Number(el.dataset.ri), 1); renderRules(); refreshParams(); };
+    el.onclick = () => { draft.rules.splice(Number(el.dataset.ri), 1); renderRules(); };
   });
 }
 
@@ -316,7 +298,6 @@ async function testRules() {
   const missing = missingParams(testParamNames(), nodeRef, paramValues);
   if (missing.length) {
     toast('Fill parameter' + (missing.length > 1 ? 's' : '') + ': ' + missing.join(', '), 'error');
-    refreshParams();
     return;
   }
   try {
