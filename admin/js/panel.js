@@ -132,17 +132,17 @@ function nodeHtml(n) {
     <h2 class="page-title">${esc(n.label)}</h2>
     ${breadcrumb([{ label: 'Datasets' }])}
     <label class="f">Network Path</label>
-    <div class="row"><input id="pathIn" value="${esc(n.network_path)}" placeholder="${esc(NETWORK_PATH_PLACEHOLDER)}"><button id="pathSave" class="small">Save</button></div>
+    <div class="row"><input id="pathIn" value="${esc(n.network_path)}" placeholder="${esc(NETWORK_PATH_PLACEHOLDER)}"></div>
     <label class="f">Tags</label>
-    <div class="row"><input id="tagsIn" list="tagsList" value="${esc(n.tags || '')}" placeholder="comma, separated, tags"><button id="tagsSave" class="small">Save</button></div>
+    <div class="row"><input id="tagsIn" list="tagsList" value="${esc(n.tags || '')}" placeholder="comma, separated, tags"></div>
     <datalist id="tagsList">${tagSuggestions(n.id).map((t) => `<option value="${esc(t)}"></option>`).join('')}</datalist>
+    <div class="row"><button id="nodeSave" class="primary small">Save</button><button data-act="delNode" class="danger small" style="margin-left:auto">Delete</button></div>
   </div>
   <div class="section">
     <h3>Datasets</h3>
     <div class="row">
       <button data-act="addDs" class="primary small">+ Dataset</button>
       <button data-act="templates" class="small">Add dataset from templates</button>
-      <button data-act="delNode" class="danger small" style="margin-left:auto">Delete</button>
     </div>
     ${n.datasets.map(datasetCard).join('') || '<p class="muted">No datasets. Add one to start monitoring.</p>'}
   </div>`;
@@ -208,13 +208,11 @@ async function onDockClick(e) {
     return;
   }
   const node = state.node(state.selectedId);
-  if (e.target.id === 'pathSave' && node) {
-    await api.patchNode(node.id, { network_path: document.getElementById('pathIn').value });
-    await refresh();
-    return;
-  }
-  if (e.target.id === 'tagsSave' && node) {
-    await api.patchNode(node.id, { tags: document.getElementById('tagsIn').value });
+  if (e.target.id === 'nodeSave' && node) {
+    await api.patchNode(node.id, {
+      network_path: document.getElementById('pathIn').value,
+      tags: document.getElementById('tagsIn').value,
+    });
     await refresh();
     return;
   }
@@ -245,9 +243,9 @@ async function onDockClick(e) {
 }
 
 async function onDockChange(e) {
-  // No dock-level change handlers remain: the node form's only fields are saved
-  // via their explicit Save button (pathSave), and dataset/metrics/rules editors
-  // manage their own inputs locally.
+  // No dock-level change handlers remain: the node form's fields are saved
+  // together via its explicit Save button (nodeSave), and dataset/metrics/rules
+  // editors manage their own inputs locally.
 }
 
 export async function refresh() {
