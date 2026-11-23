@@ -196,6 +196,11 @@ main.table-max { flex: none; height: 0; overflow: hidden; }
 .ng-btn-spin { animation: ng-spin 0.8s linear infinite; transform-box: fill-box; transform-origin: center; }
 @keyframes ng-spin { to { transform: rotate(360deg); } }
 
+/* Network-path hyperlinks on node labels (see js/nodeLinks.js): the overlay
+   rect makes the label clickable; the underline marks it as a link. */
+.ng-graph .ng-path-link { cursor: pointer; }
+.ng-graph g.ng-node:has(.ng-path-link) .ng-label { text-decoration: underline; }
+
 /* Toast — non-blocking feedback (e.g. "Refresh queued"). Sits just above the
    nodes table footer (the bottom of the canvas/dock area), never over the table
    itself; when the dock is open the JS adds .toast-dock and an inline left to

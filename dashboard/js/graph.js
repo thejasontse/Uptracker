@@ -16,6 +16,7 @@
 //     single refresh glyph (⟳) that queues collection of the node's datasets.
 //     The vendor library is never modified — this is a post-render DOM patch.
 import { createGraph } from '../vendor/nodegraph.js';
+import { attachPathLinks, isPathLinkEvent } from './nodeLinks.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const HEADER_H = 30; // matches the library's exported HEADER_H
@@ -180,6 +181,7 @@ export function initGraph(container) {
   // registered callback (with a brief spin for feedback).
   container.addEventListener('click', (e) => {
     if (e.target.closest('.ng-menu')) return; // view-menu items handle their own clicks
+    if (isPathLinkEvent(e)) return; // http(s) path links: nodeLinks.js opens them in a new tab
     const btn = isRefresh(e);
     if (!btn) { block(e); return; }
     e.preventDefault();
@@ -195,6 +197,7 @@ export function initGraph(container) {
   container.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return; // middle (1) = pan, right (2) handled by contextmenu
     suppressDrag = false; // reset at the start of every gesture
+    if (isPathLinkEvent(e)) return; // nodeLinks.js handles path-link presses itself
     if (isRefresh(e)) { e.stopPropagation(); return; } // don't drag/select, but keep default so click fires
     // Editing elements: block so the library never starts a connect / resize /
     // reorder / segment / label drag. Param rows are NOT blocked: blocking them
@@ -232,6 +235,9 @@ export function initGraph(container) {
     // Copy / paste are editing gestures too — the dashboard is read-only.
     if ((e.ctrlKey || e.metaKey) && ['c', 'v', 'C', 'V', 'x', 'X'].includes(e.key)) block(e);
   }, true);
+
+  // http(s) network paths become clickable labels (opens in a new tab).
+  attachPathLinks(container);
 
   return graph;
 }
