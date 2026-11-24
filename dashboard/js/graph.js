@@ -36,6 +36,35 @@ let viewMenuDismiss = null; // cleanup fn for the view-menu's document listeners
 let lastEffectiveSelection = new Set(); // last effective selection (change detection)
 let lastSelectionKeyStr = ''; // stringified last reported selection (flush comparison)
 
+// Left-drag panning. The read-only dashboard has no use for the library's
+// left-drag marquee select, so a press on empty canvas pans instead — via the
+// public panBy() API, without touching the vendor library. Node/group presses
+// keep selecting; middle-button pan and wheel zoom remain the library's own.
+let panning = null; // { lastX, lastY } while a left-drag pan is in flight
+
+const onPanMove = (e) => {
+  if (!panning || !graph) return;
+  graph.panBy(e.clientX - panning.lastX, e.clientY - panning.lastY);
+  panning.lastX = e.clientX;
+  panning.lastY = e.clientY;
+};
+const endPan = () => {
+  if (!panning) return;
+  panning = null;
+  document.removeEventListener('pointermove', onPanMove, true);
+  document.removeEventListener('pointerup', endPan, true);
+  document.removeEventListener('pointercancel', endPan, true);
+  containerEl?.querySelector('.ng-svg')?.classList.remove('ng-panning');
+};
+const startPan = (e) => {
+  panning = { lastX: e.clientX, lastY: e.clientY };
+  // Vendor CSS already styles .ng-panning with a grabbing cursor.
+  containerEl.querySelector('.ng-svg')?.classList.add('ng-panning');
+  document.addEventListener('pointermove', onPanMove, true);
+  document.addEventListener('pointerup', endPan, true);
+  document.addEventListener('pointercancel', endPan, true);
+};
+
 // Replace the library's editor glyphs on every node with a refresh button.
 // Idempotent: safe to call after any re-render (status repaints rebuild the
 // node DOM, which would otherwise bring the +/×/− glyphs back).
@@ -119,6 +148,16 @@ export function initGraph(container) {
   const selectionKey = () => Array.from(getEffectiveSelectedNodeIds()).sort().join(',');
 
   const flushSelectionChange = () => {
+    // A pan ends with a pointerup on empty canvas, which the library treats as
+    // "click background" and clears the selection. Panning is navigation, not
+    // an edit — swallow that clear by syncing the reported key to the live DOM
+    // without emitting. (The library's pointerup handler runs before our
+    // capture-phase endPan, so any pending click annotation is already spent.)
+    if (panning) {
+      pendingKey = null;
+      lastSelectionKeyStr = selectionKey();
+      return;
+    }
     if (pendingKey !== null) {
       const key = pendingKey;
       pendingKey = null;
@@ -216,7 +255,9 @@ export function initGraph(container) {
       suppressDrag = true;
       return;
     }
-    // Edge / empty canvas: let through (edge-select / marquee).
+    // Empty canvas: a plain left press pans (instead of the library's marquee);
+    // Shift+left still marquee-selects. Edges fall through to edge-select.
+    if (!e.shiftKey && !e.target.closest('[data-edge]')) startPan(e);
   }, true);
   // Suppress the library's window-level pointermove while a node/group press is
   // in flight. Capture phase on document fires before the target and before the

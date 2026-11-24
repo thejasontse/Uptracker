@@ -37,12 +37,15 @@ html, body {
   margin: 0; height: 100%;
   font: 12px system-ui, sans-serif;
   color: var(--ng-text); background: var(--ng-bg);
+  /* Mobile: never let the browser pan/zoom the page — pointer events drive
+     the canvas pan instead (see js/graph.js). */
+  overscroll-behavior: none;
 }
-#app { display: flex; flex-direction: column; height: 100vh; }
+#app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
 main { flex: 1; display: flex; min-height: 0; position: relative; }
 /* Canvas — stretches 14px under the dock so the gutter around the collapse tab
    shows the canvas (grid) instead of an opaque body strip. #dock paints above it. */
-#canvas { margin-right: -14px; }
+#canvas { margin-right: -14px; touch-action: none; }
 
 /* Canvas */
 #canvas { flex: 1; min-width: 0; }
@@ -139,7 +142,8 @@ pre.out {
 
 /* Nodes table — scrollable footer listing every node in the database. */
 #tableWrap {
-  height: 180px; flex: none;
+  --table-h: 180px;
+  height: var(--table-h); flex: none;
   display: flex; flex-direction: column;
   border-top: 1px solid var(--ng-node-border);
   background: var(--ng-node-bg);
@@ -207,7 +211,7 @@ main.table-max { flex: none; height: 0; overflow: hidden; }
    float it over the panel. Kept compact so it never covers the breadcrumb. */
 #sm-toast {
   position: fixed;
-  bottom: calc(180px + 12px);
+  bottom: calc(var(--table-h, 180px) + 12px);
   left: 50%;
   transform: translateX(-50%);
   z-index: 200;
@@ -223,3 +227,42 @@ main.table-max { flex: none; height: 0; overflow: hidden; }
 }
 #sm-toast.toast-dock { max-width: calc(var(--dock-w) - 32px); }
 #sm-toast.error { border-color: var(--ng-danger); color: var(--ng-danger); }
+
+/* ---------------------------------------------------------------------------
+   Mobile (≤768px) — router views take the full screen; the dock becomes a
+   slide-in overlay. body[data-view] is set by js/router.js.
+--------------------------------------------------------------------------- */
+@media (max-width: 768px) {
+  /* Full-screen table view: the query bar stays on top, rows fill the rest. */
+  #tableWrap.maximized { height: auto; }
+
+  /* The dock overlays the canvas instead of taking a column beside it. */
+  #dock {
+    position: absolute; top: 0; right: 0; bottom: 0; z-index: 10;
+    margin-left: 0; width: min(85vw, 360px);
+    transform: translateX(100%); visibility: hidden;
+    transition: transform .2s ease, visibility .2s;
+    box-shadow: -6px 0 20px #00000040;
+  }
+  #dock.collapsed { width: min(85vw, 360px); } /* overlay: hidden via transform */
+  #dock.collapsed #dockBody { display: block; }
+  #dock.open { transform: translateX(0); visibility: visible; }
+
+  /* The collapse tab rides along with the panel, on its left edge. */
+  #dock .dock-corner { right: auto; left: -15px; }
+
+  /* Dim the canvas while the overlay panel is open; a press anywhere outside
+     the panel (the dim surface or the canvas) dismisses it. */
+  body.dock-open main::after {
+    content: ''; position: absolute; inset: 0; z-index: 9;
+    background: #00000055; pointer-events: auto;
+  }
+
+  /* Bigger touch targets for the bar controls. */
+  .query-bar { padding: 8px; gap: 8px; }
+  .query-bar button.small { padding: 7px 12px; font-size: 12px; }
+  .query-bar select.q { max-width: 40vw; }
+
+  /* Table view has no canvas behind it and no footer to float above. */
+  body[data-view="table"] #sm-toast { bottom: 12px; }
+}

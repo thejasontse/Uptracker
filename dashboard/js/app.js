@@ -1,12 +1,15 @@
 // Dashboard entry: read-only graph canvas + bottom nodes table + polling.
 // A read-only dock (js/dock.js) shows dataset last-run info for the selected
-// node; no editing. Both the dock and the table collapse/expand, and the table
-// can maximize to fill the screen — states persist in localStorage.
+// node; no editing. A hash router (js/router.js) switches between the graph
+// view and a full-screen table view; both the dock and the table collapse/
+// expand, and the table can maximize to fill the screen — states persist in
+// localStorage.
 import { api } from './api.js';
 import { state } from './state.js';
-import { initGraph, loadGraph, paintStatuses, onRefreshNode, getEffectiveSelectedNodeIds, onSelectionChanged } from './graph.js';
+import { initGraph, loadGraph, paintStatuses, onRefreshNode, getEffectiveSelectedNodeIds, onSelectionChanged, fit } from './graph.js';
 import { startPolling, refreshNow } from './poll.js';
 import { initDock } from './dock.js';
+import { start as startRouter, navigate, onRoute } from './router.js';
 import { toast } from './util.js';
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
@@ -244,11 +247,24 @@ const DOCK_KEY = 'sm_dock_collapsed';
 const TABLE_COLLAPSED_KEY = 'sm_table_collapsed';
 const TABLE_MAX_KEY = 'sm_table_max';
 
+// Narrow screens: the dock becomes a slide-in overlay and the two views take
+// the full screen (CSS keys off body[data-view] + this media query).
+const isMobile = () => window.matchMedia('(max-width: 768px)').matches;
+
 function applyDockCollapsed(on) {
   const dock = document.getElementById('dock');
   const btn = document.getElementById('dockToggle');
   if (!dock || !btn) return;
   dock.classList.toggle('collapsed', on);
+  // On mobile the panel is an overlay: "expanded" means open (visible), so
+  // mirror the state onto .open and dim the canvas behind it.
+  if (isMobile()) {
+    dock.classList.toggle('open', !on);
+    document.body.classList.toggle('dock-open', !on);
+  } else {
+    dock.classList.remove('open');
+    document.body.classList.remove('dock-open');
+  }
   btn.innerHTML = on ? '&rsaquo;' : '&lsaquo;';
   btn.title = on ? 'Expand panel' : 'Collapse panel';
   btn.setAttribute('aria-label', btn.title);
@@ -277,38 +293,47 @@ function applyTableMax(on) {
   btn.setAttribute('aria-label', btn.title);
 }
 
-function initCollapse() {
-  applyDockCollapsed(localStorage.getItem(DOCK_KEY) === '1');
-  applyTableMax(localStorage.getItem(TABLE_MAX_KEY) === '1');
-  // Collapsed and maximized are mutually exclusive; maximize wins if both set.
-  const collapsed = localStorage.getItem(TABLE_COLLAPSED_KEY) === '1'
-    && localStorage.getItem(TABLE_MAX_KEY) !== '1';
-  applyTableCollapsed(collapsed);
+// --- view switch (router) ---
+// The router is the single source of truth for which view shows; the legacy
+// sm_table_collapsed / sm_table_max flags are no longer written (boot() drops
+// any stored copies so they can't fight the route on reload). The footer's
+// maximize/collapse chevron buttons double as the Graph ⇄ Table switch.
+function applyRoute(route) {
+  if (route === 'table') {
+    applyTableCollapsed(false);
+    applyTableMax(true);
+  } else {
+    applyTableMax(false);
+  }
+}
 
+function initRouter() {
+  onRoute(applyRoute);
+  return startRouter();
+}
+
+// Collapse controls: the dock tab toggles the panel; in the graph view the
+// table chevrons collapse/expand the footer, and both table buttons double as
+// router switches (maximize = go to the table view, restore/collapse = back).
+function initCollapse() {
   document.getElementById('dockToggle')?.addEventListener('click', () => {
     const on = !document.getElementById('dock').classList.contains('collapsed');
     localStorage.setItem(DOCK_KEY, on ? '1' : '0');
     applyDockCollapsed(on);
   });
   document.getElementById('tableToggle')?.addEventListener('click', () => {
-    const wrap = document.getElementById('tableWrap');
-    const on = !wrap.classList.contains('collapsed');
-    if (on && wrap.classList.contains('maximized')) {
-      localStorage.setItem(TABLE_MAX_KEY, '0');
-      applyTableMax(false);
+    // In the router's table view the footer fills the screen; collapsing it
+    // there means "back to the graph".
+    if (document.getElementById('tableWrap').classList.contains('maximized')) {
+      navigate('graph');
+      return;
     }
+    const on = !document.getElementById('tableWrap').classList.contains('collapsed');
     localStorage.setItem(TABLE_COLLAPSED_KEY, on ? '1' : '0');
     applyTableCollapsed(on);
   });
   document.getElementById('tableMax')?.addEventListener('click', () => {
-    const wrap = document.getElementById('tableWrap');
-    const on = !wrap.classList.contains('maximized');
-    if (on && wrap.classList.contains('collapsed')) {
-      localStorage.setItem(TABLE_COLLAPSED_KEY, '0');
-      applyTableCollapsed(false);
-    }
-    localStorage.setItem(TABLE_MAX_KEY, on ? '1' : '0');
-    applyTableMax(on);
+    navigate(document.getElementById('tableWrap').classList.contains('maximized') ? 'graph' : 'table');
   });
 }
 
@@ -328,6 +353,10 @@ async function boot() {
   const graph = initGraph(canvas);
   window.__graph = graph;
   loadGraph(snap.graph);
+  // On small screens frame the whole graph on load: a fresh viewport at 100%
+  // often shows only an empty corner of the layout, which reads as a blank
+  // canvas. Desktop keeps the server's saved view.
+  if (isMobile()) fit();
 
   // Keep the bottom table in sync with the canvas selection.
   onSelectionChanged(() => renderTable());
@@ -352,7 +381,44 @@ async function boot() {
 
   initTableSort();
   initDock();
-  initCollapse();
+  // Mobile: the dock is an overlay, collapsed by default on initial load. It
+  // pops open only when a *new* single-node selection arrives (a tap on the
+  // canvas) — a selection restored from the previous session must not reopen
+  // it — and closes again when a press lands outside the panel. Registered
+  // before the dock state is applied below so mobile starts collapsed.
+  if (isMobile()) {
+    localStorage.setItem(DOCK_KEY, '1');
+    const bootKey = [...getEffectiveSelectedNodeIds()].sort().join(',');
+    onSelectionChanged(() => {
+      const sel = getEffectiveSelectedNodeIds();
+      const key = [...sel].sort().join(',');
+      if (key === bootKey) return; // restored selection at load: keep closed
+      const wantOpen = sel.size === 1 && document.body.dataset.view === 'graph';
+      const collapsed = localStorage.getItem(DOCK_KEY) === '1';
+      if (wantOpen && collapsed) {
+        localStorage.setItem(DOCK_KEY, '0');
+        applyDockCollapsed(false);
+      } else if (!wantOpen && !collapsed) {
+        localStorage.setItem(DOCK_KEY, '1');
+        applyDockCollapsed(true);
+      }
+    });
+    document.addEventListener('pointerdown', (e) => {
+      const dock = document.getElementById('dock');
+      if (localStorage.getItem(DOCK_KEY) === '1') return;
+      if (dock.contains(e.target)) return;
+      localStorage.setItem(DOCK_KEY, '1');
+      applyDockCollapsed(true);
+    }, true);
+  }
+  // The router owns the table's collapsed/maximized state; drop the legacy
+  // flags so a stale "maximized" from before doesn't fight the route.
+  localStorage.removeItem(TABLE_COLLAPSED_KEY);
+  localStorage.removeItem(TABLE_MAX_KEY);
+  applyDockCollapsed(localStorage.getItem(DOCK_KEY) === '1');
+  applyTableCollapsed(false);
+  applyTableMax(false);
+  applyRoute(initRouter());
   // boot() already loaded a snapshot, so skip the immediate first poll tick.
   startPolling(undefined, { skipFirst: true });
   initViews();
