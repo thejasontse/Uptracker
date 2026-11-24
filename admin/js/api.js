@@ -59,4 +59,7 @@ export const api = {
 
   importArchive: (zipB64) => req('POST', 'api/import', { zip_b64: zipB64 }),
   exportUrl: 'api/export',
+
+  templatesExportUrl: 'api/templates/export',
+  importTemplates: (doc) => req('POST', 'api/templates/import', { doc }),
 };

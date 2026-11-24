@@ -5,6 +5,7 @@
 // so the terminal always reflects what the operator just tested.
 let headerEl = null;
 let rawEl = null;
+let ruleLines = [];      // pending "── rules ──" lines set by the rules editor
 
 function ensureElements() {
   if (headerEl && rawEl) return;
@@ -25,8 +26,16 @@ export function setVisible(visible) {
 
 export function clearTerminal() {
   ensureElements();
+  ruleLines = [];
   if (headerEl) headerEl.textContent = '';
   if (rawEl) rawEl.textContent = '';
+}
+
+// Queue the "── rules ──" block (match summary + per-rule error lines) shown
+// under the parsed metrics by the next showTestResult call. The rules editor
+// evaluates draft rules client-side, so it sets these before rendering.
+export function setRuleLines(lines) {
+  ruleLines = Array.isArray(lines) ? lines.filter((l) => l) : [];
 }
 
 // Render a /api/test/run response into the terminal: timestamped header line,
@@ -41,6 +50,7 @@ export function showTestResult(res, source) {
   let text = res.raw || '(no output)';
   const parsed = res.parsed || [];
   if (parsed.length) text += '\n\n' + renderParsed(parsed);
+  if (ruleLines.length) text += '\n\n── rules ──\n' + ruleLines.join('\n');
   rawEl.textContent = text;
 }
 

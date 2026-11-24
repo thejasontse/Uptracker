@@ -9,18 +9,14 @@ import { breadcrumb, esc, toast, RULE_STATUSES } from './util.js';
 import {
   scanParams, paramValueMap, missingParams, attachParamAutocomplete,
 } from './params.js';
-import { showTestResult } from './dockTerminal.js';
+import { showTestResult, setRuleLines } from './dockTerminal.js';
+import { compare as compareRule } from './rulesEngine.js';
 
 const OPS = [
   ['gt', '>'], ['lt', '<'], ['gte', '≥'], ['lte', '≤'], ['eq', '='], ['ne', '≠'],
   ['contains', 'contains'], ['regex', 'regex'], ['missing', 'is missing'], ['present', 'is present'],
   ['is', 'is'], ['is_not', 'is not'], ['between', 'between'],
 ];
-
-// Words treated as boolean true/false by the is / is_not operators (mirrors
-// app/rules.py). Anything else fails to normalise and never matches.
-const TRUE_WORDS = new Set(['1', 'true', 'yes', 'on', 'up', 'ok']);
-const FALSE_WORDS = new Set(['0', 'false', 'no', 'off', 'down']);
 
 let draft = null;        // working copy: { rules: [...], alert }
 let metric = null;       // the metric row from the snapshot
@@ -40,75 +36,6 @@ function _parseStatusDefault(raw) {
   return ['warning', 'critical'];
 }
 let lastTest = null;     // parsed value entry from the most recent test run
-
-// True when *text*'s leading numeric prefix equals cnum — mirrors _text_num_equal
-// in app/rules.py so eq/ne match percentage-style values ("85 %", rule "85%")
-// that never compare equal as raw strings.
-function textNumEqual(text, cnum) {
-  const lead = leadingNum(text);
-  return lead !== null && lead === cnum;
-}
-
-// Leading numeric prefix of *text* as a number ("5%" -> 5), or null. Mirrors
-// _leading_num in app/rules.py: comparison ops fall back to this when the value
-// has no parsed num (str cast, or regex captured "5%"), so units don't break
-// gt/lt/gte/lte/between.
-function leadingNum(text) {
-  const m = /^\s*(-?\d+(?:\.\d+)?)/.exec(String(text ?? ''));
-  return m ? parseFloat(m[1]) : null;
-}
-
-// Client-side mirror of app/rules.py rule_matches(). *value* is a parsed test
-// result {num, txt, raw, error}; returns true when the rule condition holds.
-function ruleMatches(op, ruleValue, value) {
-  if (op === 'missing') return !!(value && value.error);
-  if (op === 'present') return !!(value && !value.error);
-  if (!value || value.error) return false;
-  const text = value.txt != null ? value.txt : (value.raw || '');
-  // Mirror backend _coerce: no parsed num -> use the text's leading numeric
-  // prefix so "5%" still evaluates against gt/lt/gte/lte/between rules.
-  const num = typeof value.num === 'number' ? value.num : leadingNum(text);
-  const cnum = parseFloat(ruleValue);
-  const hasCnum = ruleValue !== '' && !Number.isNaN(cnum);
-  switch (op) {
-    case 'gt': return num != null && hasCnum && num > cnum;
-    case 'lt': return num != null && hasCnum && num < cnum;
-    case 'gte': return num != null && hasCnum && num >= cnum;
-    case 'lte': return num != null && hasCnum && num <= cnum;
-    case 'eq':
-      if (hasCnum) return (num != null && num === cnum) || textNumEqual(text, cnum);
-      return text === ruleValue;
-    case 'ne':
-      if (hasCnum) return !((num != null && num === cnum) || textNumEqual(text, cnum));
-      return text !== ruleValue;
-    case 'contains': return text.includes(ruleValue);
-    case 'regex': try { return new RegExp(ruleValue).test(text); } catch { return false; }
-    case 'is':
-    case 'is_not': {
-      const want = asBool(ruleValue);
-      let got = asBool(text);
-      if (got == null && num != null) got = num !== 0;
-      if (want == null || got == null) return false;
-      return op === 'is' ? got === want : got !== want;
-    }
-    case 'between': {
-      // Mirror backend _parse_range: comma and/or whitespace separated.
-      const parts = String(ruleValue).trim().split(/[,\s]+/).filter(Boolean);
-      if (parts.length !== 2) return false;
-      const lo = parseFloat(parts[0]); const hi = parseFloat(parts[1]);
-      if (num == null || Number.isNaN(lo) || Number.isNaN(hi)) return false;
-      return num >= lo && num <= hi;
-    }
-    default: return false;
-  }
-}
-
-function asBool(s) {
-  const low = String(s == null ? '' : s).trim().toLowerCase();
-  if (TRUE_WORDS.has(low)) return true;
-  if (FALSE_WORDS.has(low)) return false;
-  return null;
-}
 
 // All [Param] names referenced across the test: dataset script, metric regex,
 // and every rule value. Mirrors the backend scan so each token gets an input.
@@ -314,20 +241,26 @@ async function testRules() {
     const entry = (res.parsed || [])[0] || {};
     if (entry.error) { showTestResult(res, 'rules editor'); return; }
     // Evaluate each rule and report which fire, plus the resulting status.
+    // Rules that fail to evaluate (bad regex, non-numeric threshold, ...) are
+    // listed with their error reason in the terminal's rules block.
     const fired = [];
-    for (const r of draft.rules) {
-      if (ruleMatches(r.op, r.value, entry)) {
-        const lvl = state.snapshot.status_levels.find((l) => l.id === Number(r.status_level_id));
-        fired.push(lvl ? lvl.name : '?');
-      }
-    }
+    const lines = [];
+    draft.rules.forEach((r, i) => {
+      const { match, error } = compareRule(r.op, r.value, entry);
+      if (error) { lines.push(`rule ${i + 1} [${r.op} "${r.value}"] — ${error}`); return; }
+      if (!match) return;
+      const lvl = state.snapshot.status_levels.find((l) => l.id === Number(r.status_level_id));
+      fired.push(lvl ? lvl.name : '?');
+    });
     // Worst status among the firing rules (ties → worse), mirroring evaluate_metric.
     let result = 'unknown';
     const order = { unknown: 0, good: 1, warning: 2, critical: 3 };
     for (const f of fired) if ((order[f] ?? 0) > (order[result] ?? 0)) result = f;
-    const summary = `${fired.length ? 'matched ' + fired.join(', ') : 'no rule matched'} · status: ${result}`;
-    showTestResult({ ...res, error: res.ok ? null : res.error, raw: (res.raw || '') + '\n— rules —\n' + summary }, 'rules editor');
+    lines.push(`${fired.length ? 'matched ' + fired.join(', ') : 'no rule matched'} · status: ${result}`);
+    setRuleLines(lines);
+    showTestResult({ ...res, error: res.ok ? null : res.error }, 'rules editor');
   } catch (e) {
+    setRuleLines([]);
     showTestResult({ ok: false, error: e.message, raw: '', parsed: [] }, 'rules editor');
   }
 }

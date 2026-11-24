@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import time
 from typing import Any
 
 from . import db
@@ -254,6 +255,122 @@ def apply_dataset_template(
                 (mid, r.get("op", "missing"), _r(r.get("value", "")), r.get("status_level_id"), r.get("priority", 0)),
             )
     return {"dataset_id": ds_id, "name": ds_name}
+
+
+# ---------------------------------------------------------------------------
+# Dataset template file export / import (portable JSON)
+# ---------------------------------------------------------------------------
+# Export format:
+#   {"kind": "uptracker-dataset-templates", "version": 1,
+#    "exported_at": "...", "templates": [{"name": ..., "payload": {...}}]}
+# Rules inside payloads are written with the level *name* (``"level": "warning"``)
+# instead of this database's ``status_level_id``, so a file exported on one
+# instance imports correctly on another (reverse of ``db._resolve_template_levels``).
+TEMPLATES_DOC_KIND = "uptracker-dataset-templates"
+TEMPLATES_DOC_VERSION = 1
+
+
+def _level_names(conn: sqlite3.Connection) -> dict[int, str]:
+    return {
+        r["id"]: r["name"]
+        for r in conn.execute("SELECT id, name FROM status_levels").fetchall()
+    }
+
+
+def export_dataset_templates(conn: sqlite3.Connection) -> dict:
+    """Build a portable JSON document of all dataset templates.
+
+    Each rule's ``status_level_id`` is replaced by the level's *name* so the
+    document is instance-independent; rules referencing a missing level id are
+    exported without a level and dropped again on import."""
+    names = _level_names(conn)
+    out: list[dict] = []
+    for t in list_templates(conn, "dataset"):
+        payload = dict(t["payload"])
+        metrics = []
+        for m in payload.get("metrics", []):
+            mm = dict(m)
+            rules = []
+            for r in m.get("rules", []):
+                rr = {k: v for k, v in r.items() if k != "status_level_id"}
+                level_name = names.get(r.get("status_level_id"))
+                if level_name is not None:
+                    rr["level"] = level_name
+                rules.append(rr)
+            mm["rules"] = rules
+            metrics.append(mm)
+        payload["metrics"] = metrics
+        out.append({"name": t["name"], "payload": payload})
+    return {
+        "kind": TEMPLATES_DOC_KIND,
+        "version": TEMPLATES_DOC_VERSION,
+        "exported_at": db.now_iso(),
+        "templates": out,
+    }
+
+
+def import_dataset_templates(conn: sqlite3.Connection, doc: Any) -> dict:
+    """Import a document produced by :func:`export_dataset_templates`.
+
+    Nothing is ever overwritten: every template is added with the current UTC
+    timestamp appended to its name (``<name>_YYYYMMDDHHMMSS``). Rule level names
+    are resolved against this database's ``status_levels``; rules whose level is
+    unknown are dropped (same policy as bundled-template seeding). Raises
+    ``ValueError`` when *doc* is not a valid templates document."""
+    if not isinstance(doc, dict) or doc.get("kind") != TEMPLATES_DOC_KIND:
+        raise ValueError("not an uptracker dataset templates file")
+    items = doc.get("templates")
+    if not isinstance(items, list):
+        raise ValueError("templates file is missing its 'templates' list")
+    levels = {
+        r["name"]: r["id"]
+        for r in conn.execute("SELECT id, name FROM status_levels").fetchall()
+    }
+    ts = time.strftime("%Y%m%d%H%M%S", time.gmtime())
+    created: list[str] = []
+    dropped_rules = 0
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        payload = item.get("payload")
+        if not name or not isinstance(payload, dict):
+            continue
+        resolved, dropped = _import_resolve_levels(payload, levels)
+        dropped_rules += dropped
+        final_name = f"{name}_{ts}"
+        save_template(conn, final_name, "dataset", resolved)
+        created.append(final_name)
+    return {"created": created, "dropped_rules": dropped_rules}
+
+
+def _import_resolve_levels(payload: dict, levels: dict[str, int]) -> tuple[dict, int]:
+    """Replace each rule's ``level`` name with this DB's ``status_level_id``.
+
+    Returns the rewritten payload copy and the count of rules dropped because
+    their level name is unknown here."""
+    out = dict(payload)
+    metrics = []
+    dropped = 0
+    for m in payload.get("metrics", []):
+        if not isinstance(m, dict):
+            continue
+        mm = dict(m)
+        rules = []
+        for r in m.get("rules", []) or []:
+            if not isinstance(r, dict):
+                continue
+            rr = {k: v for k, v in r.items() if k != "level"}
+            level_id = levels.get(r.get("level"))
+            if level_id is None:
+                dropped += 1
+                continue
+            rr["status_level_id"] = level_id
+            rules.append(rr)
+        mm["rules"] = rules
+        metrics.append(mm)
+    out["metrics"] = metrics
+    return out, dropped
 
 
 # ---------------------------------------------------------------------------

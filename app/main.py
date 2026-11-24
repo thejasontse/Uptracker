@@ -798,6 +798,38 @@ def save_template(body: TemplateBody) -> dict:
         return tpl.save_template(conn, body.name, body.template_type, body.payload)
 
 
+@app.get("/api/templates/export")
+def export_templates_file() -> Response:
+    """Download all dataset templates as a portable JSON file.
+
+    Declared before ``/api/templates/{template_id}`` so the literal path wins."""
+    with _conn() as conn:
+        doc = tpl.export_dataset_templates(conn)
+    fname = f"uptracker-dataset-templates-{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}.json"
+    return Response(
+        content=json.dumps(doc, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+class TemplatesImportBody(BaseModel):
+    doc: Any
+
+
+@app.post("/api/templates/import")
+def import_templates_file(body: TemplatesImportBody) -> dict:
+    """Add dataset templates from an exported JSON document.
+
+    Never overwrites: each template is inserted with the current UTC timestamp
+    appended to its name. Rules whose level name is unknown here are dropped."""
+    with _conn() as conn:
+        try:
+            return tpl.import_dataset_templates(conn, body.doc)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+
+
 @app.delete("/api/templates/{template_id}")
 def delete_template(template_id: int) -> dict:
     with _conn() as conn:

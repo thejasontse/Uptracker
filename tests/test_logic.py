@@ -4,7 +4,10 @@ import pytest
 from app import templates
 from app.crypto import secret_box
 from app.parser import extract
-from app.rules import RuleRow, evaluate_metric, rule_matches, worst_status
+from app.rules import (
+    OPS, RuleRow, compare, evaluate_metric, evaluate_metric_detailed,
+    rule_matches, worst_status,
+)
 
 
 # ---------------- parser ----------------
@@ -162,6 +165,96 @@ def test_worst_status():
     ranks = {1: 10, 2: 20, 3: 30}
     assert worst_status([1, 3, 2], ranks) == 3
     assert worst_status([], ranks) is None
+
+
+# ---------------- comparison engine (compare + error reporting) ----------------
+def _pv(num=None, txt=None, raw=None, error=None):
+    from app.parser import ParsedValue
+    return ParsedValue(raw if raw is not None else (txt or ""), num, txt, error)
+
+
+INT = lambda: _pv(num=50.0, txt="50")          # noqa: E731 - numeric value
+PCT = lambda: _pv(txt="85 %")                  # noqa: E731 - unit text, no num
+STRV = lambda: _pv(txt="UP")                   # noqa: E731 - string value
+MISS = lambda: _pv(error="no match")           # noqa: E731 - missing value
+
+
+def test_compare_every_op_is_dispatched():
+    # The dispatch table must cover every advertised operator.
+    for op in OPS:
+        matched, err = compare(op, "", INT())
+        assert err != "unknown operator ''" or op == ""
+
+
+def test_compare_numeric_ops_types():
+    assert compare("gt", "10", INT()) == (True, None)
+    assert compare("gt", "50", INT()) == (False, None)
+    assert compare("lt", "abc", INT())[0] is False
+    assert compare("lt", "abc", INT())[1] == "rule value 'abc' is not numeric"
+    # Unit-suffixed text falls back to its leading number.
+    assert compare("gte", "85", PCT()) == (True, None)
+    assert compare("lte", "80", PCT()) == (False, None)
+    # Non-numeric value against a numeric op reports instead of silently False.
+    m, err = compare("gt", "10", STRV())
+    assert m is False and err == "value 'UP' is not numeric"
+
+
+def test_compare_eq_ne_types():
+    assert compare("eq", "50", INT()) == (True, None)
+    # Rule value may carry a unit ("85%") even when the value is text with a
+    # different unit spelling ("85 %"); eq/ne compares leading numeric prefixes.
+    assert compare("eq", "85%", _pv(txt="85%")) == (True, None)
+    assert compare("eq", "85", PCT()) == (True, None)
+    assert compare("eq", "UP", STRV()) == (True, None)
+    assert compare("ne", "85", PCT()) == (False, None)
+    assert compare("ne", "DOWN", STRV()) == (True, None)
+
+
+def test_compare_bool_ops():
+    assert compare("is", "true", _pv(txt="up"))[0] is True
+    assert compare("is_not", "false", _pv(num=1.0, txt="1"))[0] is True
+    m, err = compare("is", "maybe", STRV())
+    assert m is False and err == "cannot interpret 'maybe' as true/false"
+    m, err = compare("is_not", "maybe", STRV())
+    assert m is False and err == "cannot interpret 'maybe' as true/false"
+
+
+def test_compare_regex_error():
+    m, err = compare("regex", "[", STRV())
+    assert m is False and err.startswith("invalid regex:")
+    assert compare("regex", "^U", STRV()) == (True, None)
+
+
+def test_compare_between_errors():
+    assert compare("between", "40,60", INT()) == (True, None)
+    assert compare("between", "40 60", INT()) == (True, None)
+    m, err = compare("between", "80", INT())
+    assert m is False and err == "expected two numbers 'min, max'"
+    m, err = compare("between", "abc,def", INT())
+    assert m is False and err == "expected two numbers 'min, max'"
+    m, err = compare("between", "40,60", STRV())
+    assert m is False and err == "value 'UP' is not numeric"
+
+
+def test_compare_missing_present_and_unknown():
+    assert compare("missing", "", MISS()) == (True, None)
+    assert compare("present", "", MISS()) == (False, None)
+    # A missing value never matches a value-comparison rule and never errors.
+    assert compare("gt", "10", MISS()) == (False, None)
+    m, err = compare("frobnicate", "1", INT())
+    assert m is False and err == "unknown operator 'frobnicate'"
+
+
+def test_evaluate_metric_detailed_reports_errors():
+    ranks = {1: 10, 2: 20, 3: 30}
+    rules = [
+        RuleRow(1, "gt", "abc", 2, 0),      # errors: non-numeric rule value
+        RuleRow(2, "gt", "40", 3, 0),       # matches
+        RuleRow(3, "lt", "10", 1, 0),       # evaluated, no match
+    ]
+    sid, errors = evaluate_metric_detailed(rules, INT(), ranks)
+    assert sid == 3
+    assert [(r.id, e) for r, e in errors] == [(1, "rule value 'abc' is not numeric")]
 
 
 # ---------------- crypto ----------------

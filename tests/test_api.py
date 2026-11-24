@@ -210,6 +210,69 @@ def test_template_apply_missing_params(client):
     assert client.get("/api/snapshot").json()["nodes"][0]["datasets"] == []
 
 
+# ---------------- dataset template file export / import API ----------------
+def test_templates_export_file_shape(client):
+    r = client.get("/api/templates/export")
+    assert r.status_code == 200
+    assert "attachment" in r.headers["content-disposition"]
+    doc = r.json()
+    assert doc["kind"] == "uptracker-dataset-templates"
+    assert doc["version"] == 1
+    names = {t["name"] for t in doc["templates"]}
+    assert {"WinOS Disks", "WinOS OS/CPU/RAM", "WinOS Ping"} <= names
+    # Rules are exported by level *name*, never this DB's status_level_id.
+    disks = next(t for t in doc["templates"] if t["name"] == "WinOS Disks")
+    rules = [r for m in disks["payload"]["metrics"] for r in m["rules"]]
+    assert rules and all("level" in r and "status_level_id" not in r for r in rules)
+    assert {r["level"] for r in rules} <= {"good", "warning", "critical"}
+
+
+def test_templates_import_roundtrip_suffixes_names(client):
+    doc = client.get("/api/templates/export").json()
+    before = {t["name"] for t in client.get("/api/templates").json()["templates"]}
+    r = client.post("/api/templates/import", json={"doc": doc})
+    assert r.status_code == 200, r.text
+    res = r.json()
+    assert res["dropped_rules"] == 0
+    assert len(res["created"]) == len(doc["templates"])
+    # Every import lands as a _<timestamp> copy; originals untouched.
+    for name in res["created"]:
+        assert name.split("_")[-1].isdigit() and len(name.split("_")[-1]) == 14
+        base = "_".join(name.split("_")[:-1])
+        assert base in before
+    after = {t["name"] for t in client.get("/api/templates").json()["templates"]}
+    assert before < after
+    # Imported rules resolve back to this DB's status_level_ids.
+    imported = next(t for t in client.get("/api/templates", params={"template_type": "dataset"}).json()["templates"]
+                    if t["name"].startswith("WinOS Disks_"))
+    rules = [r for m in imported["payload"]["metrics"] for r in m["rules"]]
+    assert rules and all(isinstance(r.get("status_level_id"), int) for r in rules)
+
+
+def test_templates_import_drops_unknown_levels(client):
+    doc = {"kind": "uptracker-dataset-templates", "version": 1, "exported_at": "x",
+           "templates": [{"name": "lvl-test", "payload": {
+               "name": "d", "method": "bash", "script": "echo ok",
+               "metrics": [{"name": "m", "regex": "ok", "group_index": 0, "rules": [
+                   {"op": "gt", "value": "1", "priority": 0, "level": "critical"},
+                   {"op": "lt", "value": "1", "priority": 0, "level": "bogus"}]}]}}]}
+    r = client.post("/api/templates/import", json={"doc": doc})
+    assert r.status_code == 200
+    res = r.json()
+    assert res["dropped_rules"] == 1 and len(res["created"]) == 1
+    imported = next(t for t in client.get("/api/templates").json()["templates"]
+                    if t["name"].startswith("lvl-test_"))
+    rules = imported["payload"]["metrics"][0]["rules"]
+    assert len(rules) == 1 and rules[0]["op"] == "gt"
+
+
+def test_templates_import_rejects_bad_doc(client):
+    for bad in [{}, {"kind": "other"}, {"kind": "uptracker-dataset-templates"},
+                {"kind": "uptracker-dataset-templates", "templates": "nope"}]:
+        r = client.post("/api/templates/import", json={"doc": bad})
+        assert r.status_code == 400, (bad, r.text)
+
+
 # ---------------- bundled default templates seed ----------------
 def test_default_templates_seeded_once_and_deletions_stick(client, data_dir):
     """``init_db`` seeds the three bundled WinOS dataset templates exactly once;

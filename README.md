@@ -172,6 +172,37 @@ curl -i http://localhost/admin/api/snapshot
   prefix, e.g. `<match url="^uptracker/(dashboard/.*)$" />` →
   `url="http://127.0.0.1:8090/{R:1}"`.
 
+## Rule operators
+
+A rule compares a metric's parsed value against its *rule value* and assigns a
+status level when it matches. The worst matching status wins; no match → unknown.
+
+| Op | UI label | Use case | Rule value example |
+|----|----------|----------|--------------------|
+| `gt` | `>` | Threshold exceeded — disk %, temperature, latency | `90` |
+| `lt` | `<` | Value below a floor — free space, remaining days | `10` |
+| `gte` | `≥` | Threshold reached (inclusive) | `80` |
+| `lte` | `≤` | Within a ceiling (inclusive) | `80` |
+| `eq` | `=` | Exact match — state strings or numbers; compares leading numbers when both sides are numeric (`"85 %"` = `85%`) | `85%` |
+| `ne` | `≠` | Anything except a specific value | `DOWN` |
+| `contains` | `contains` | Substring in free text — service state, OS caption | `Not Responding` |
+| `regex` | `regex` | Full pattern match on the captured text | `^CRIT\|WARN$` |
+| `missing` | `is missing` | Metric absent — script failed or key gone from output (no rule value) | — |
+| `present` | `is present` | Metric collected at all, whatever the value (no rule value) | — |
+| `is` | `is` | Boolean state — ping True/False, service Up/Down. Words `1/true/yes/on/up/ok` vs `0/false/no/off/down`; a non-zero number counts as true | `True` |
+| `is_not` | `is not` | Negated boolean — "not up" | `False` |
+| `between` | `between` | Warning band, e.g. 80–90 % before critical; accepts `min,max` or `min max` | `80,90` |
+
+Notes:
+
+- Numeric ops (`gt/lt/gte/lte/between`) fall back to the value's leading
+  numeric prefix, so unit-suffixed text like `"85 %"` works without a `float` cast.
+- Comparison errors (invalid regex, non-numeric threshold, malformed range) are
+  reported per rule in the dock terminal when you press **Test rules**; during
+  scheduled collection they count as no-match.
+- Reference implementation: `app/rules.py` (`compare()` dispatch table), mirrored
+  by `admin/js/rulesEngine.js`.
+
 ## Test
 
 ```bash

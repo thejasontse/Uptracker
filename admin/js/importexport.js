@@ -4,6 +4,7 @@
 // The credential keyfile is NOT in the archive, so credentials imported from
 // another instance are flagged and must be re-keyed in the Credentials tab.
 import { api } from './api.js';
+import { esc } from './util.js';
 
 // ---------------- export ----------------
 export function renderExportView(body, ctx) {
@@ -17,6 +18,13 @@ export function renderExportView(body, ctx) {
     <p class="muted">The archive does <b>not</b> include this server's credential
       encryption key. Credentials imported elsewhere will need their secrets
       re-entered.</p>
+  </div>
+  <div class="section">
+    <h2>Dataset templates</h2>
+    <p class="muted">Download all saved dataset templates as a portable
+      <code>.json</code> file — share them with another instance without moving
+      nodes, credentials, or settings.</p>
+    <div class="row"><a href="${api.templatesExportUrl}" download><button class="small">Download templates (.json)</button></a></div>
   </div>`;
 }
 
@@ -67,6 +75,59 @@ export function renderImportView(body, ctx) {
       status.textContent = '';
       result.innerHTML = `<p class="err">Import failed: ${e.message}</p>`;
       go.disabled = false;
+    }
+  };
+
+  renderTemplateImport(body, ctx);
+}
+
+// ---------------- dataset templates import ----------------
+// Additive (unlike the archive import): every template from the JSON file is
+// added with a _YYYYMMDDHHMMSS suffix on its name — nothing is overwritten.
+function renderTemplateImport(body, ctx) {
+  const sec = document.createElement('div');
+  sec.className = 'section';
+  sec.innerHTML = `
+    <h2>Dataset templates</h2>
+    <p class="muted">Add dataset templates from an exported <code>.json</code> file.
+      Templates are never overwritten — each imported template gets the current
+      date/time appended to its name.</p>
+    <label class="f">Templates file (.json)</label>
+    <input type="file" id="tplImpFile" accept=".json,application/json">
+    <div class="row"><button id="tplImpGo" class="primary small" disabled>Import templates</button>
+      <span id="tplImpStatus" class="muted"></span></div>
+    <div id="tplImpResult"></div>`;
+  body.appendChild(sec);
+
+  const fileIn = sec.querySelector('#tplImpFile');
+  const go = sec.querySelector('#tplImpGo');
+  const status = sec.querySelector('#tplImpStatus');
+  const result = sec.querySelector('#tplImpResult');
+  fileIn.onchange = () => { go.disabled = !fileIn.files.length; result.innerHTML = ''; };
+
+  go.onclick = async () => {
+    const file = fileIn.files[0];
+    if (!file) return;
+    go.disabled = true;
+    status.textContent = 'Reading…';
+    try {
+      const doc = JSON.parse(await file.text());
+      if (!doc || doc.kind !== 'uptracker-dataset-templates' || !Array.isArray(doc.templates)) {
+        throw new Error('not an uptracker dataset templates file');
+      }
+      status.textContent = 'Importing…';
+      const res = await api.importTemplates(doc);
+      status.textContent = '';
+      result.innerHTML = res.created.length
+        ? `<p class="ok">Added ${res.created.length} template(s): ${res.created.map((n) => esc(n)).join(', ')}.</p>
+           ${res.dropped_rules ? `<p class="muted">${res.dropped_rules} rule(s) dropped (unknown status level).</p>` : ''}`
+        : '<p class="muted">No templates found in the file.</p>';
+      fileIn.value = '';
+      if (ctx && ctx.onChange) await ctx.onChange();
+    } catch (e) {
+      status.textContent = '';
+      result.innerHTML = `<p class="err">Import failed: ${esc(e.message)}</p>`;
+      go.disabled = !fileIn.files.length;
     }
   };
 }
