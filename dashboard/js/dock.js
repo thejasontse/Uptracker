@@ -6,7 +6,7 @@ import { api } from './api.js';
 import { state } from './state.js';
 import { getEffectiveSelectedNodeIds, onSelectionChanged } from './graph.js';
 import { refreshNow } from './poll.js';
-import { formatTimestamp } from './util.js';
+import { formatTimestamp, scheduleLabel } from './util.js';
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
   (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -34,6 +34,7 @@ function datasetCard(d) {
     </div>
     ${readings ? `<div class="readings">${readings}</div>` : ''}
     ${d.last_error ? `<div class="err">last run: ${esc(d.last_error)}</div>` : ''}
+    <div class="kv"><span class="k">schedule</span><span>${esc(scheduleLabel(d))}</span></div>
     ${ts ? `<div class="kv"><span class="k">last run</span><span>${esc(ts)}</span></div>` : ''}
   </div>`;
 }

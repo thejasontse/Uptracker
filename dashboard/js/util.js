@@ -55,3 +55,15 @@ export function formatTimestamp(iso) {
     return d.toLocaleString();
   }
 }
+
+// How a dataset's schedule reads on cards: on-demand datasets (interval 0 /
+// mode "none") never run from the timer. Mirrors admin/js/editor.js.
+export function scheduleLabel(ds) {
+  if (!ds.interval_s || ds.schedule_mode === 'none') return 'on demand';
+  const n = ds.interval_s;
+  const unit = ds.interval_unit || 'seconds';
+  const mult = { seconds: 1, minutes: 60, hours: 3600, days: 86400 }[unit] || 1;
+  if (unit === 'seconds' || n % mult !== 0) return `every ${n}s`;
+  const count = n / mult;
+  return `every ${count} ${unit}${count === 1 ? '' : 's'}`;
+}

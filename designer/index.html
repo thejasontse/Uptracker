@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Uptracker — Designer</title>
+<script>
+// Anchor all relative asset URLs (app.css, ./vendor/…) to the app's directory.
+// This makes the page work both when served directly (http://host:8090/designer/)
+// and when reached through a port-forwarding proxy, even if the proxy URL is
+// missing its trailing slash.
+(function () {
+  var p = location.pathname;
+  if (p.charAt(p.length - 1) !== '/') p = p.replace(/\/[^\/]*$/, '/');
+  document.write('<base href="' + p + '">');
+})();
+</script>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="app">
+  <main>
+    <div id="canvas"></div>
+  </main>
+</div>
+<script>
+// Surface module/import failures (a classic handler can see a failed `import`,
+// which a try/catch inside the module cannot).
+window.addEventListener('error', function (e) {
+  var c = document.getElementById('canvas');
+  if (c && !c.dataset.ready) c.innerHTML = '<p class="err pad">Failed to load: ' +
+    (e.message || 'script error') + '</p>';
+});
+</script>
+<script type="module" src="js/designer.js"></script>
+</body>
+</html>

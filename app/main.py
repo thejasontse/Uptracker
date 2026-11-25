@@ -44,13 +44,15 @@ from .crypto import secret_box
 from .executor import ALL_METHODS
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-# Static bundles, overridable for tests (SM_ADMIN_DIR / SM_DASHBOARD_DIR);
-# data dir via SM_DATA_DIR.
+# Static bundles, overridable for tests (SM_ADMIN_DIR / SM_DASHBOARD_DIR /
+# SM_DESIGNER_DIR); data dir via SM_DATA_DIR.
 #   /admin     — full app (protect behind webserver authentication)
 #   /dashboard — read-only graph + status table
+#   /designer  — standalone nodegraph.js playground (no data, no API usage)
 ADMIN_DIR = Path(os.environ.get("SM_ADMIN_DIR", str(BASE_DIR / "admin")))
 DASHBOARD_DIR = Path(os.environ.get("SM_DASHBOARD_DIR", str(BASE_DIR / "dashboard")))
-PREFIXES = ("/admin", "/dashboard")
+DESIGNER_DIR = Path(os.environ.get("SM_DESIGNER_DIR", str(BASE_DIR / "designer")))
+PREFIXES = ("/admin", "/dashboard", "/designer")
 
 
 @asynccontextmanager
@@ -96,6 +98,9 @@ async def prefix_api(request: Request, call_next):
     path = request.scope["path"]
     for p in PREFIXES:
         if path == f"{p}/api" or path.startswith(f"{p}/api/"):
+            # Remember which bundle asked (snapshot filters hidden datasets for
+            # the dashboard) before rewriting the path onto the shared routes.
+            request.scope["sm_bundle"] = p.lstrip("/")
             request.scope["path"] = path[len(p):]
             break
     return await call_next(request)
@@ -176,7 +181,23 @@ def _dataset_dict(conn, ds: sqlite3.Row, levels: dict[int, dict]) -> dict:
         "credential": creds, "metrics": metrics,
         "param_values": _safe_json_obj(ds["param_values"] if "param_values" in ds.keys() else "{}"),
         "last_output": ds["last_output"] if "last_output" in ds.keys() else None,
+        "hidden": bool(ds["hidden"]) if "hidden" in ds.keys() else False,
+        "schedule_mode": (ds["schedule_mode"] if "schedule_mode" in ds.keys() and ds["schedule_mode"]
+                          else ("none" if ds["interval_s"] <= 0 else "every")),
+        "interval_unit": (ds["interval_unit"] if "interval_unit" in ds.keys() and ds["interval_unit"]
+                          else _infer_unit(ds["interval_s"])),
     }
+
+
+def _infer_unit(interval_s: int) -> str:
+    """Best-guess display unit for a stored interval when the row predates the
+    schedule_mode/interval_unit columns: largest unit dividing it evenly."""
+    unit = "seconds"
+    if interval_s > 0:
+        for name, mult in (("minutes", 60), ("hours", 3600), ("days", 86400)):
+            if interval_s % mult == 0:
+                unit = name  # smallest-first loop keeps the last (largest) match
+    return unit
 
 
 def _safe_json_obj(raw) -> dict:
@@ -234,9 +255,11 @@ def _iter_chunks(items, size=_CHUNK):
         yield items[i:i + size]
 
 
-def _batched_snapshot(conn, levels: dict[int, dict]) -> list[dict]:
+def _batched_snapshot(conn, levels: dict[int, dict], hide_hidden: bool = False) -> list[dict]:
     """Assemble the per-node snapshot tree with a fixed number of queries.
 
+    ``hide_hidden`` drops datasets flagged ``hidden`` (the dashboard bundle);
+    admin and bare API callers always see every dataset.
     The naive path (snapshot() calling _dataset_dict per dataset, which itself
     loops metrics and issues a value/rules/alert query each) is O(N_nodes x
     N_datasets x N_metrics) round-trips — the dominant server cost at 50+ nodes.
@@ -323,27 +346,35 @@ def _batched_snapshot(conn, levels: dict[int, dict]) -> list[dict]:
             "metrics": [build_metric(m) for m in met_by_ds.get(d["id"], [])],
             "param_values": _safe_json_obj(d["param_values"] if "param_values" in d.keys() else "{}"),
             "last_output": d["last_output"] if "last_output" in d.keys() else None,
+            "hidden": bool(d["hidden"]) if "hidden" in d.keys() else False,
+            "schedule_mode": (d["schedule_mode"] if "schedule_mode" in d.keys() and d["schedule_mode"]
+                              else ("none" if d["interval_s"] <= 0 else "every")),
+            "interval_unit": (d["interval_unit"] if "interval_unit" in d.keys() and d["interval_unit"]
+                              else _infer_unit(d["interval_s"])),
         }
 
     out = []
     for n in nodes_rows:
+        visible = [d for d in ds_by_node.get(n["id"], []) if not (hide_hidden and d["hidden"])]
         out.append({
             "id": n["id"], "label": n["label"],
             "network_path": n["network_path"],
             "tags": n["tags"] if "tags" in n.keys() else "",
             "status": _status_of(conn, n["status_level_id"], levels),
             "status_updated_at": n["status_updated_at"],
-            "datasets": [build_dataset(d) for d in ds_by_node.get(n["id"], [])],
+            "datasets": [build_dataset(d) for d in visible],
         })
     return out
 
 
 @app.get("/api/snapshot")
-def snapshot() -> dict:
+def snapshot(request: Request) -> dict:
     with _conn() as conn:
         levels = _levels_map(conn)
         graph = db.get_graph_json(conn)
-        nodes = _batched_snapshot(conn, levels)
+        # The dashboard bundle never shows datasets flagged hidden in the admin.
+        hide_hidden = request.scope.get("sm_bundle") == "dashboard"
+        nodes = _batched_snapshot(conn, levels, hide_hidden=hide_hidden)
         return {
             "graph": graph,
             "status_levels": [dict(r) for r in conn.execute("SELECT * FROM status_levels ORDER BY rank").fetchall()],
@@ -417,15 +448,20 @@ def run_node_now(node_id: str, background_tasks: BackgroundTasks) -> dict:
     in-process via FastAPI background tasks. Running it here — rather than
     waiting for the scheduler's next tick — means refresh works even when the
     scheduler is disabled or paused in Settings. Each dataset collects with
-    its own connection so a slow script never blocks the response."""
+    its own connection so a slow script never blocks the response.
+
+    Exclusions: hidden datasets (a dashboard affordance — the user cannot see
+    them, so refreshing must not run them) and on-demand datasets
+    (``interval_s <= 0``, which have no scheduler due-time to pull forward;
+    they collect via the dataset's own *Run now*)."""
     with _conn() as conn:
         _require(conn, "nodes", node_id, "node")
         ids = [r["id"] for r in conn.execute(
-            "SELECT id FROM datasets WHERE node_id=? AND enabled=1 ORDER BY id",
+            "SELECT id FROM datasets WHERE node_id=? AND enabled=1 AND hidden=0 AND interval_s > 0 ORDER BY id",
             (node_id,),
         ).fetchall()]
         cur = conn.execute(
-            "UPDATE datasets SET next_run_at=? WHERE node_id=? AND enabled=1",
+            "UPDATE datasets SET next_run_at=? WHERE node_id=? AND enabled=1 AND hidden=0 AND interval_s > 0",
             (db.now_iso(), node_id),
         )
 
@@ -444,16 +480,29 @@ def run_node_now(node_id: str, background_tasks: BackgroundTasks) -> dict:
 # ---------------------------------------------------------------------------
 # Datasets (with credential guard)
 # ---------------------------------------------------------------------------
+# Schedule units the admin editor offers for the "Every <n> <unit>" row. The DB
+# always stores seconds in interval_s; unit + mode only record how the form was
+# configured so it round-trips exactly ("month" deliberately absent — use days).
+SCHEDULE_UNITS = {"seconds": 1, "minutes": 60, "hours": 3600, "days": 86400}
+
+
 class DatasetBody(BaseModel):
     name: str
     method: str = "bash"
     script: str = ""
+    # interval_s=None on a patch means "keep the stored schedule"; the admin
+    # always sends an explicit value (0 for Not scheduled).
     timeout_s: int = 30
-    interval_s: int = 600
-    enabled: bool = True
+    interval_s: int | None = 600
+    # enabled=None on a patch keeps the stored flag. The admin UI no longer
+    # exposes it ("Not scheduled" covers pausing); the column stays for the API.
+    enabled: bool | None = None
     credential_id: int | None = None
     secret: str | None = None          # re-entered secret (required on script change w/ credential)
     param_values: dict[str, str] | None = None   # [Param] token -> value; script keeps tokens
+    hidden: bool = False               # hide from the dashboard (graph/dock/table/refresh)
+    schedule_mode: str | None = None   # "every" | "none"; None = infer from interval_s
+    interval_unit: str | None = None   # one of SCHEDULE_UNITS; None = infer
 
 
 def _validate_method(method: str) -> None:
@@ -461,9 +510,41 @@ def _validate_method(method: str) -> None:
         raise HTTPException(400, f"method must be one of {sorted(ALL_METHODS)}")
 
 
+def _schedule_config(body: DatasetBody, old=None) -> tuple[str, str]:
+    """Resolve (schedule_mode, interval_unit) for create/patch. ``interval_s``
+    is normalized to a concrete number by the caller before this runs.
+
+    Explicit values from the client win; otherwise preserve what the row already
+    had (patch), or infer from ``interval_s`` so API-only callers and legacy
+    rows keep working: 0 → "none", else "every" with the largest unit that
+    divides the value evenly."""
+    if body.schedule_mode is not None:
+        mode = body.schedule_mode
+    elif old is not None and "schedule_mode" in old.keys() and old["schedule_mode"]:
+        mode = old["schedule_mode"]
+        if body.interval_s <= 0:
+            mode = "none"
+    else:
+        mode = "none" if body.interval_s <= 0 else "every"
+    if mode not in ("every", "none"):
+        raise HTTPException(400, "schedule_mode must be 'every' or 'none'")
+    unit = body.interval_unit if body.interval_unit is not None else (
+        old["interval_unit"] if old is not None and "interval_unit" in old.keys() and old["interval_unit"] else None)
+    if unit is None:
+        unit = "seconds"
+        for name, mult in (("minutes", 60), ("hours", 3600), ("days", 86400)):
+            if body.interval_s > 0 and body.interval_s % mult == 0:
+                unit = name  # smallest-first loop keeps the last (largest) match
+    if unit not in SCHEDULE_UNITS:
+        raise HTTPException(400, f"interval_unit must be one of {sorted(SCHEDULE_UNITS)}")
+    return mode, unit
+
+
 @app.post("/api/nodes/{node_id}/datasets")
 def create_dataset(node_id: str, body: DatasetBody) -> dict:
     _validate_method(body.method)
+    # Normalize the optional schedule before anything reads interval_s.
+    body = body.model_copy(update={"interval_s": 0 if body.interval_s is None else body.interval_s})
     with _conn() as conn:
         if not conn.execute("SELECT id FROM nodes WHERE id=?", (node_id,)).fetchone():
             raise HTTPException(404, "node not found")
@@ -475,11 +556,20 @@ def create_dataset(node_id: str, body: DatasetBody) -> dict:
         if cred_id and body.secret:
             conn.execute("UPDATE credentials SET secret_enc=?, updated_at=? WHERE id=?",
                          (secret_box().encrypt(body.secret), db.now_iso(), cred_id))
+        mode, unit = _schedule_config(body)
+        # next_run_at is display metadata for the scheduler's due queue; an
+        # on-demand dataset (interval_s <= 0, e.g. "Not scheduled") must not
+        # carry a due time, so it starts NULL and only ever collects via the
+        # run endpoints.
+        scheduled = body.interval_s > 0
         cur = conn.execute(
-            """INSERT INTO datasets (node_id, name, method, script, timeout_s, interval_s, enabled, next_run_at, credential_id, param_values, created_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (node_id, body.name, body.method, body.script, body.timeout_s, body.interval_s,
-             1 if body.enabled else 0, db.now_iso(), cred_id, json.dumps(body.param_values or {}),
+            """INSERT INTO datasets (node_id, name, method, script, timeout_s, interval_s, enabled, next_run_at, credential_id, param_values, hidden, schedule_mode, interval_unit, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (node_id, body.name, body.method, body.script, max(0, body.timeout_s),
+             max(0, body.interval_s) if scheduled else 0,
+             1 if body.enabled is not False else 0, db.now_iso() if scheduled else None,
+             cred_id, json.dumps(body.param_values or {}),
+             1 if body.hidden else 0, mode, unit,
              db.now_iso(), db.now_iso()),
         )
         ds = conn.execute("SELECT * FROM datasets WHERE id=?", (cur.lastrowid,)).fetchone()
@@ -507,16 +597,21 @@ def patch_dataset(dataset_id: int, body: DatasetBody) -> dict:
             conn.execute("UPDATE credentials SET secret_enc=?, updated_at=? WHERE id=?",
                          (secret_box().encrypt(body.secret), db.now_iso(), cred_id))
         # Preserve the stored param_values when the caller omits them (None);
-        # an explicit {} clears them.
+        # an explicit {} clears them. interval_s=None likewise keeps the stored
+        # schedule seconds (the admin always sends a value; 0 = on demand).
         if body.param_values is not None:
             param_values_json = json.dumps(body.param_values)
         else:
             param_values_json = old["param_values"] if "param_values" in old.keys() else "{}"
+        interval_s = old["interval_s"] if body.interval_s is None else body.interval_s
+        body = body.model_copy(update={"interval_s": interval_s})
+        mode, unit = _schedule_config(body, old)
         conn.execute(
             """UPDATE datasets SET name=?, method=?, script=?, timeout_s=?, interval_s=?, enabled=?,
-                   credential_id=?, param_values=?, next_run_at=? WHERE id=?""",
-            (body.name, body.method, body.script, body.timeout_s, body.interval_s,
-             1 if body.enabled else 0, cred_id, param_values_json, db.now_iso(), dataset_id),
+                   credential_id=?, param_values=?, hidden=?, schedule_mode=?, interval_unit=?, next_run_at=? WHERE id=?""",
+            (body.name, body.method, body.script, max(0, body.timeout_s), max(0, interval_s),
+             1 if (old["enabled"] if body.enabled is None else body.enabled) else 0, cred_id, param_values_json,
+             1 if body.hidden else 0, mode, unit, db.now_iso(), dataset_id),
         )
         ds = conn.execute("SELECT * FROM datasets WHERE id=?", (dataset_id,)).fetchone()
         return _dataset_dict(conn, ds, _levels_map(conn))
@@ -1115,6 +1210,6 @@ def root() -> RedirectResponse:
     return RedirectResponse("/dashboard/", status_code=307)
 
 
-for _name, _dir in (("admin", ADMIN_DIR), ("dashboard", DASHBOARD_DIR)):
+for _name, _dir in (("admin", ADMIN_DIR), ("dashboard", DASHBOARD_DIR), ("designer", DESIGNER_DIR)):
     (_dir / "vendor").mkdir(parents=True, exist_ok=True)
     app.mount(f"/{_name}", _BundleStaticFiles(directory=_dir, html=True), name=_name)

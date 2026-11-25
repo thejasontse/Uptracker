@@ -235,11 +235,18 @@ def apply_dataset_template(
         return render_params(render(text or "", ctx), values)
 
     ds_name = _r(payload.get("name", "Dataset"))
+    interval_s = payload.get("interval_s", 600)
+    # Preserve the template's schedule config: mode 'none' (or interval 0) makes
+    # an on-demand dataset; the unit is display metadata recorded as configured.
+    mode = "none" if payload.get("schedule_mode") == "none" or interval_s <= 0 else "every"
+    # An on-demand dataset must not carry a due time (see create_dataset).
+    scheduled = max(0, interval_s) > 0
     cur = conn.execute(
-        """INSERT INTO datasets (node_id, name, method, script, timeout_s, interval_s, enabled, next_run_at, created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?)""",
+        """INSERT INTO datasets (node_id, name, method, script, timeout_s, interval_s, enabled, next_run_at, schedule_mode, interval_unit, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
         (node_id, ds_name, payload.get("method", "bash"), _r(payload.get("script", "")),
-         payload.get("timeout_s", 30), payload.get("interval_s", 600), 1, db.now_iso(), db.now_iso(), db.now_iso()),
+         payload.get("timeout_s", 30), max(0, interval_s), 1, db.now_iso() if scheduled else None,
+         mode, payload.get("interval_unit") or "seconds", db.now_iso(), db.now_iso()),
     )
     ds_id = cur.lastrowid
     for m in payload.get("metrics", []):

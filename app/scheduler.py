@@ -30,10 +30,12 @@ def _parse_iso(ts: str | None) -> datetime | None:
 
 
 def _due_datasets(conn) -> list[int]:
+    # ``interval_s > 0`` excludes on-demand datasets ("Not scheduled"): they are
+    # never picked up by the timer, only by the manual run endpoints.
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     rows = conn.execute(
         """SELECT id FROM datasets
-           WHERE enabled=1 AND (next_run_at IS NULL OR next_run_at <= ?)
+           WHERE enabled=1 AND interval_s > 0 AND (next_run_at IS NULL OR next_run_at <= ?)
            ORDER BY next_run_at NULLS FIRST LIMIT 32""",
         (now,),
     ).fetchall()
@@ -45,7 +47,12 @@ def _claim(conn, dataset_id: int) -> bool:
     row = conn.execute("SELECT interval_s FROM datasets WHERE id=? AND enabled=1", (dataset_id,)).fetchone()
     if not row:
         return False
-    nxt = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + max(1, row["interval_s"])))
+    if row["interval_s"] <= 0:
+        # On-demand dataset that slipped through (e.g. switched mid-tick): never
+        # run it from the timer, and clear its due time so it stays unclaimed.
+        conn.execute("UPDATE datasets SET next_run_at=NULL WHERE id=?", (dataset_id,))
+        return False
+    nxt = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + row["interval_s"]))
     cur = conn.execute(
         "UPDATE datasets SET next_run_at=? WHERE id=? AND enabled=1", (nxt, dataset_id),
     )

@@ -6,6 +6,10 @@ this model — ``ping -c1 host``, ``nc -z host 443``, ``curl -s https://…`` �
 so no dedicated executors are needed. Credentials are injected into the child
 environment (``SM_USER``, ``SM_SECRET``) and never written to disk or logs.
 
+A timeout of ``0`` (or any non-positive value) disables the subprocess timeout:
+the command runs until it exits on its own. This pairs with on-demand datasets
+(``interval_s = 0``) for long-running scripts started by hand.
+
 The executor returns the raw stdout, which the parser then mines for metric
 values.
 """
@@ -48,12 +52,15 @@ def run_shell(method: str, script: str, timeout_s: int, secret: str | None = Non
     argv = _SHELL_BIN.get(method)
     if not argv:
         return RunResult(False, "", f"unknown shell method: {method}")
+    # timeout <= 0 means "no timeout": subprocess.run(timeout=None) waits for
+    # the process to exit on its own (on-demand long-running scripts).
+    timeout = timeout_s if timeout_s and timeout_s > 0 else None
     try:
         proc = subprocess.run(
             argv + [script],
             capture_output=True,
             text=True,
-            timeout=timeout_s,
+            timeout=timeout,
             env=_env_with_credentials(secret, username),
         )
     except subprocess.TimeoutExpired:

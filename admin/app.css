@@ -165,6 +165,8 @@ main { flex: 1; display: flex; min-height: 0; position: relative; }
 .crumb.active { font-weight: 700; color: var(--ng-text); cursor: default; }
 .crumb-sep { color: var(--ng-muted); }
 label.f { display: block; font-size: 11px; color: var(--ng-muted); margin: 7px 0 2px; }
+/* Section divider inside the dataset editor (frames the credential fields). */
+hr.sec { border: 0; border-top: 1px solid var(--ng-node-border); margin: 12px 0; opacity: .5; }
 .muted { color: var(--ng-muted); }
 .pad { padding: 12px; }
 

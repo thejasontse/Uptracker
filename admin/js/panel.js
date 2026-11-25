@@ -5,7 +5,7 @@
 import { api } from './api.js';
 import { state } from './state.js';
 import { esc, breadcrumb, NETWORK_PATH_PLACEHOLDER, toast, formatTimestamp } from './util.js';
-import { renderDatasetEditor } from './editor.js';
+import { renderDatasetEditor, scheduleLabel, timeoutLabel } from './editor.js';
 import { renderMetricsView } from './metrics.js';
 import { renderRulesView } from './rules.js';
 import { renderTemplatesView } from './templates.js';
@@ -166,7 +166,7 @@ function datasetCard(d) {
   return `
   <div class="card">
     <div class="head">
-      <span class="t">${esc(d.name)}</span>
+      <span class="t">${esc(d.name)}${d.hidden ? ' <span class="muted" title="Hidden from the dashboard: not shown there and skipped by its node refresh">(hidden)</span>' : ''}</span>
       <button class="small" data-act="run" data-ds="${d.id}">Run</button>
       <button class="small" data-act="edit" data-ds="${d.id}">Edit</button>
       <button class="small" data-act="metrics" data-ds="${d.id}">Metrics</button>
@@ -174,6 +174,7 @@ function datasetCard(d) {
     </div>
     ${readings ? `<div class="readings">${readings}</div>` : ''}
     ${d.last_error ? `<div class="err">last run: ${esc(d.last_error)}</div>` : ''}
+    <div class="kv"><span class="k">schedule</span><span>${esc(scheduleLabel(d))} · timeout ${esc(timeoutLabel(d))}</span></div>
     ${ts ? `<div class="kv"><span class="k">last run</span><span>${esc(ts)}</span></div>` : ''}
     ${d.credential ? `<div class="kv"><span class="k">credential</span><span>🔒 ${esc(d.credential.name)}</span></div>` : ''}
   </div>`;

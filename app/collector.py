@@ -216,12 +216,14 @@ def _outcome_dict(o: MetricOutcome, levels: dict[int, dict]) -> dict:
 
 
 def recompute_node_status(conn: sqlite3.Connection, node_id: str) -> str | None:
-    """Node status = worst rank across enabled datasets' metric values."""
+    """Node status = worst rank across enabled, non-hidden datasets' metric
+    values. Hidden datasets contribute nothing so the stored rollup the
+    dashboard reads matches what it displays."""
     rows = conn.execute(
         """SELECT mv.status_level_id AS sid
            FROM metric_values mv
            JOIN datasets d ON d.id = mv.dataset_id
-           WHERE d.node_id=? AND d.enabled=1 AND mv.status_level_id IS NOT NULL""",
+           WHERE d.node_id=? AND d.enabled=1 AND d.hidden=0 AND mv.status_level_id IS NOT NULL""",
         (node_id,),
     ).fetchall()
     levels, unknown_id = _load_status_levels(conn)
@@ -331,6 +333,11 @@ def _alert_ctx(node, metric, status_name: str, value: ParsedValue) -> dict:
     }
 
 
-def _next_run(interval_s: int) -> str:
+def _next_run(interval_s: int) -> str | None:
+    """Next scheduled run for a dataset, or ``None`` when it is on-demand
+    (``interval_s <= 0``): storing NULL keeps it out of the scheduler's due set
+    after an on-demand run."""
     import time
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + max(1, interval_s)))
+    if not interval_s or interval_s <= 0:
+        return None
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + interval_s))

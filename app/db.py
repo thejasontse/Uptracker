@@ -96,15 +96,20 @@ CREATE TABLE IF NOT EXISTS nodes (
     updated_at        TEXT NOT NULL
 );
 
--- A retrieval job attached to a node.
+-- A retrieval job attached to a node. Schedule and timeout support opt-out:
+-- interval_s = 0 (schedule_mode 'none') is an on-demand dataset the timer never
+-- runs; timeout_s = 0 disables the subprocess timeout entirely. schedule_mode
+-- and interval_unit record how the admin form was configured; interval_s stays
+-- the canonical seconds value used by the scheduler. hidden keeps the dataset
+-- out of the dashboard (dock, table, node refresh) while admin sees everything.
 CREATE TABLE IF NOT EXISTS datasets (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     node_id        TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
     name           TEXT NOT NULL,
     method         TEXT NOT NULL DEFAULT 'bash',   -- bash|cmd|powershell
     script         TEXT NOT NULL DEFAULT '',        -- shell command body
-    timeout_s      INTEGER NOT NULL DEFAULT 30,
-    interval_s     INTEGER NOT NULL DEFAULT 600,
+    timeout_s      INTEGER NOT NULL DEFAULT 30,     -- 0 = no timeout
+    interval_s     INTEGER NOT NULL DEFAULT 600,    -- 0 = not scheduled (on-demand)
     enabled        INTEGER NOT NULL DEFAULT 1,
     next_run_at    TEXT,
     last_run_at    TEXT,
@@ -113,6 +118,9 @@ CREATE TABLE IF NOT EXISTS datasets (
     credential_id  INTEGER REFERENCES credentials(id) ON DELETE SET NULL,
     param_values   TEXT NOT NULL DEFAULT '{}',      -- JSON: [Param] token -> value (script keeps tokens)
     last_output    TEXT,                            -- full stdout/stderr of the latest run (for regex building)
+    hidden         INTEGER NOT NULL DEFAULT 0,      -- 1 = hide from the dashboard
+    schedule_mode  TEXT NOT NULL DEFAULT 'every',   -- every|none
+    interval_unit  TEXT NOT NULL DEFAULT 'seconds', -- seconds|minutes|hours|days (display only)
     created_at     TEXT NOT NULL,
     updated_at     TEXT NOT NULL
 );
@@ -231,6 +239,8 @@ def init_db() -> None:
         migrate_drop_node_tracking(conn)
         migrate_drop_network_resource_and_clear_templates(conn)
         migrate_add_node_tags(conn)
+        migrate_dataset_schedule_config(conn)
+        migrate_dataset_hidden(conn)
         row = conn.execute("SELECT json FROM graph_model WHERE id=1").fetchone()
         if row is None:
             conn.execute(
@@ -382,6 +392,43 @@ def migrate_add_node_tags(conn: sqlite3.Connection) -> None:
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(nodes)")}
     if "tags" not in cols:
         conn.execute("ALTER TABLE nodes ADD COLUMN tags TEXT NOT NULL DEFAULT ''")
+
+
+def migrate_dataset_schedule_config(conn: sqlite3.Connection) -> None:
+    """Add ``datasets.schedule_mode`` ('every' | 'none') and
+    ``datasets.interval_unit`` (seconds|minutes|hours|days) to databases created
+    before the columns existed.
+
+    These record how the admin's schedule form was configured; ``interval_s``
+    remains the canonical value in seconds that the scheduler uses.
+    ``schedule_mode='none'`` pairs with ``interval_s=0`` for on-demand datasets
+    (never timer-run, collect via *Run now*), and ``timeout_s=0`` means no
+    subprocess timeout. Existing rows are backfilled: interval 0 → 'none',
+    otherwise 'every' with the largest unit dividing the seconds evenly.
+    Idempotent."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(datasets)")}
+    if "schedule_mode" not in cols:
+        conn.execute("ALTER TABLE datasets ADD COLUMN schedule_mode TEXT NOT NULL DEFAULT 'every'")
+        conn.execute("UPDATE datasets SET schedule_mode='none' WHERE interval_s <= 0")
+    if "interval_unit" not in cols:
+        conn.execute("ALTER TABLE datasets ADD COLUMN interval_unit TEXT NOT NULL DEFAULT 'seconds'")
+        # Assign smallest unit first, then let larger ones overwrite so the
+        # largest divisor wins (90s → seconds, 3600s → hours).
+        for unit, secs in (("minutes", 60), ("hours", 3600), ("days", 86400)):
+            conn.execute(
+                f"UPDATE datasets SET interval_unit=? "
+                f"WHERE interval_s > 0 AND interval_s % {secs} = 0",
+                (unit,),
+            )
+
+
+def migrate_dataset_hidden(conn: sqlite3.Connection) -> None:
+    """Add ``datasets.hidden`` (1 = not shown on the dashboard: graph dock,
+    status table, and the ⟳ node refresh skip it; admin sees everything) to
+    databases created before the column existed. Idempotent."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(datasets)")}
+    if "hidden" not in cols:
+        conn.execute("ALTER TABLE datasets ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0")
 
 
 # ``[Network Resource]`` parameter token and its lower-cased param_values key,

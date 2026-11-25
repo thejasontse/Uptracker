@@ -15,6 +15,29 @@ import { showTestResult } from './dockTerminal.js';
 
 const METHODS = ['bash', 'cmd', 'powershell'];
 
+// Schedule units offered by the "Every <n> <unit>" row; seconds stored in the DB.
+const INTERVAL_UNITS = [
+  { id: 'seconds', label: 'seconds', mult: 1 },
+  { id: 'minutes', label: 'minutes', mult: 60 },
+  { id: 'hours', label: 'hours', mult: 3600 },
+  { id: 'days', label: 'days', mult: 86400 },
+];
+
+// Decompose a stored interval_s into { value, unit } for the form. Prefers the
+// unit recorded by the server (draft.interval_unit) when it divides evenly;
+// otherwise the largest unit that does (fallback: seconds).
+function splitInterval(intervalS, preferredUnit) {
+  const n = Math.max(0, intervalS || 0);
+  if (preferredUnit) {
+    const u = INTERVAL_UNITS.find((x) => x.id === preferredUnit);
+    if (u && n > 0 && n % u.mult === 0) return { value: n / u.mult, unit: u.id };
+  }
+  for (const u of [...INTERVAL_UNITS].reverse()) {
+    if (n > 0 && n % u.mult === 0) return { value: n / u.mult, unit: u.id };
+  }
+  return { value: n || 1, unit: 'seconds' };
+}
+
 let draft = null;
 let editorNode = null;   // node being edited (for [Param] auto-fill)
 let tplActive = null;    // dataset template payload currently applied to the draft
@@ -32,16 +55,39 @@ function draftParamNames() {
   return scanParams(texts);
 }
 
+// How the schedule reads in the dataset editor's summary line: on-demand
+// datasets (interval 0 / mode "none") never run from the timer.
+export function scheduleLabel(ds) {
+  if (!ds.interval_s || ds.schedule_mode === 'none') return 'on demand';
+  const n = ds.interval_s;
+  const unit = ds.interval_unit || 'seconds';
+  const mult = { seconds: 1, minutes: 60, hours: 3600, days: 86400 }[unit] || 1;
+  if (unit === 'seconds' || n % mult !== 0) return `every ${n}s`;
+  const count = n / mult;
+  return `every ${count} ${unit}${count === 1 ? '' : 's'}`;
+}
+
+// Timeout summary: 0 means the script runs without a time limit.
+export function timeoutLabel(ds) {
+  return ds.timeout_s > 0 ? `${ds.timeout_s}s` : 'none';
+}
+
 export function renderDatasetEditor(body, node, ds, ctx) {
   draft = ds
     ? JSON.parse(JSON.stringify({ ...ds, metrics: ds.metrics.map((m) => ({ ...m, rules: [...m.rules] })) }))
-    : { id: null, name: 'New dataset', method: 'bash', script: '', timeout_s: 30, interval_s: 600, enabled: true, credential_id: null, credential: null, metrics: [] };
+    : { id: null, name: 'New dataset', method: 'bash', script: '', timeout_s: 30, interval_s: 600, hidden: false, schedule_mode: 'every', interval_unit: 'seconds', credential_id: null, credential: null, metrics: [] };
   draft.secret = null;
   editorNode = node;
   tplActive = null;
   // Repopulate saved [Param] values (stored raw on the dataset) so re-opening
   // an existing dataset shows the last-entered values, not blanks.
   paramValues = ds && ds.param_values ? { ...ds.param_values } : {};
+
+  // Seed the 4-field schedule row from the stored config: mode dropdown, then
+  // value + unit (only live for "Every"), then timeout (0 = no limit).
+  const schedMode = ds && ds.interval_s === 0 ? 'none' : (ds && ds.schedule_mode) || 'every';
+  draft.schedule_mode = schedMode;
+  const split = splitInterval(draft.interval_s, draft.interval_unit);
 
   body.innerHTML = `
   <div class="section">
@@ -60,15 +106,31 @@ export function renderDatasetEditor(body, node, ds, ctx) {
       <div id="tplParamFields"></div>
     </div>
     <div class="row">
-      <div style="flex:1"><label class="f">Timeout (s)</label><input id="dsTimeout" type="number" value="${draft.timeout_s}"></div>
-      <div style="flex:1"><label class="f">Interval (s)</label><input id="dsInterval" type="number" value="${draft.interval_s}"></div>
-      <div style="flex:1"><label class="f">Enabled</label><input id="dsEnabled" type="checkbox" ${draft.enabled ? 'checked' : ''}></div>
-    </div>
-    <div class="row">
       <div style="flex:1"><label class="f">Credential</label><select id="dsCred"></select></div>
       <div style="flex:1"><label class="f">Secret</label><input id="dsSecret" type="password" placeholder="re-enter to save" autocomplete="new-password"></div>
     </div>
     <div class="row"><button id="btnTest" class="small">Test run</button></div>
+    <hr class="sec">
+    <div class="row">
+      <div style="flex:1"><label class="f">Schedule</label><select id="dsScheduleMode">
+        <option value="none"${schedMode === 'none' ? ' selected' : ''}>Not scheduled</option>
+        <option value="every"${schedMode === 'every' ? ' selected' : ''}>Every</option>
+      </select></div>
+      <div style="flex:1"><label class="f">Value</label><input id="dsIntervalValue" type="number" min="1" step="1" value="${schedMode === 'none' ? '' : split.value}"${schedMode === 'none' ? ' disabled' : ''}></div>
+      <div style="flex:1"><label class="f">Unit</label><select id="dsIntervalUnit"${schedMode === 'none' ? ' disabled' : ''}>
+        ${INTERVAL_UNITS.map((u) => `<option value="${u.id}"${schedMode !== 'none' && u.id === split.unit ? ' selected' : ''}>${u.label}</option>`).join('')}
+      </select></div>
+    </div>
+    <div class="row">
+      <div style="flex:0 0 auto;width:8em"><label class="f">Timeout (s)</label><input id="dsTimeout" type="number" min="0" step="1" value="${draft.timeout_s}"></div>
+      <div style="flex:1;display:flex;align-items:center;gap:6px;padding-top:20px">
+        <input id="dsHidden" type="checkbox" ${draft.hidden ? 'checked' : ''}>
+        <label for="dsHidden" style="cursor:pointer">Hide on dashboard</label>
+      </div>
+    </div>
+    <p class="muted">Timeout <code>0</code> runs the script with no time limit. <b>Not scheduled</b> datasets never run on a timer — collect them with <b>Run</b>.</p>
+    <hr class="sec">
+    <p class="muted" id="hiddenHint"${draft.hidden ? '' : ' hidden'}>Hidden datasets are not shown on the dashboard and are skipped by its ⟳ node refresh. They still collect on their schedule — run them from here anytime.</p>
     <div class="row" style="margin-top:12px">
       <button id="btnTpl" class="small">Save as template</button>
       <span style="flex:1"></span>
@@ -81,6 +143,27 @@ export function renderDatasetEditor(body, node, ds, ctx) {
   loadCredentials(body.querySelector('#dsCred'));
 
   body.querySelector('#dsMethod').onchange = () => refreshParams();
+  // Mode switch: "Not scheduled" blanks the value and greys out both fields
+  // (interval_s 0). Switching back to "Every" restores a usable default.
+  body.querySelector('#dsScheduleMode').onchange = (e) => {
+    const off = e.target.value === 'none';
+    const valEl = body.querySelector('#dsIntervalValue');
+    const unitEl = body.querySelector('#dsIntervalUnit');
+    if (off) {
+      valEl.dataset.restore = valEl.value || String(split.value);
+      unitEl.dataset.restore = unitEl.value || split.unit;
+      valEl.value = '';
+    } else {
+      valEl.value = valEl.dataset.restore || '1';
+      unitEl.value = unitEl.dataset.restore || 'seconds';
+    }
+    valEl.disabled = off;
+    unitEl.disabled = off;
+  };
+  // Hidden hint appears the moment the box is checked.
+  body.querySelector('#dsHidden').onchange = (e) => {
+    document.getElementById('hiddenHint').hidden = !e.target.checked;
+  };
   body.querySelector('#btnTest').onclick = () => testRun();
   body.querySelector('#btnTpl').onclick = () => saveAsTemplate(node);
   body.querySelector('#btnSave').onclick = () => commit(node, ds, ctx, 'node');
@@ -128,7 +211,19 @@ function applyTemplateToDraft(t) {
   document.getElementById('dsMethod').value = draft.method;
   document.getElementById('dsScript').value = draft.script;
   document.getElementById('dsTimeout').value = draft.timeout_s;
-  document.getElementById('dsInterval').value = draft.interval_s;
+  // Re-seed the schedule row from the template's interval (mode: none when 0).
+  const mode = draft.interval_s <= 0 ? 'none' : 'every';
+  draft.schedule_mode = mode;
+  const split = splitInterval(draft.interval_s, p.interval_unit);
+  const modeEl = document.getElementById('dsScheduleMode');
+  modeEl.value = mode;
+  const valEl = document.getElementById('dsIntervalValue');
+  const unitEl = document.getElementById('dsIntervalUnit');
+  // "Not scheduled" blanks the value and greys both fields (see render).
+  valEl.value = mode === 'none' ? '' : split.value;
+  unitEl.value = mode === 'none' ? '' : split.unit;
+  valEl.disabled = mode === 'none';
+  unitEl.disabled = mode === 'none';
   refreshParams();
 }
 
@@ -160,9 +255,22 @@ function collectDraft() {
   draft.name = document.getElementById('dsName').value;
   draft.method = document.getElementById('dsMethod').value;
   draft.script = document.getElementById('dsScript').value;
-  draft.timeout_s = Number(document.getElementById('dsTimeout').value) || 30;
-  draft.interval_s = Number(document.getElementById('dsInterval').value) || 600;
-  draft.enabled = document.getElementById('dsEnabled').checked;
+  // Timeout: blank/invalid falls back to 30; 0 is a real value (no limit).
+  const tmo = Number(document.getElementById('dsTimeout').value);
+  draft.timeout_s = Number.isFinite(tmo) && tmo >= 0 ? Math.floor(tmo) : 30;
+  // Schedule: "Not scheduled" stores 0; "Every" multiplies value × unit.
+  draft.schedule_mode = document.getElementById('dsScheduleMode').value;
+  if (draft.schedule_mode === 'none') {
+    draft.interval_s = 0;
+  } else {
+    const u = INTERVAL_UNITS.find((x) => x.id === document.getElementById('dsIntervalUnit').value) || INTERVAL_UNITS[0];
+    const v = Math.max(1, Math.floor(Number(document.getElementById('dsIntervalValue').value)) || 1);
+    draft.interval_unit = u.id;
+    draft.interval_s = v * u.mult;
+  }
+  // The enabled checkbox is gone: "Not scheduled" covers pausing, and the API
+  // default keeps every dataset collectable via Run.
+  draft.hidden = document.getElementById('dsHidden').checked;
   draft.credential_id = document.getElementById('dsCred').value ? Number(document.getElementById('dsCred').value) : null;
   const secret = document.getElementById('dsSecret').value;
   if (secret) draft.secret = secret;
@@ -226,7 +334,8 @@ async function commit(node, ds, ctx, then) {
   collectDraft();
   const body = {
     name: draft.name, method: draft.method, script: draft.script,
-    timeout_s: draft.timeout_s, interval_s: draft.interval_s, enabled: draft.enabled,
+    timeout_s: draft.timeout_s, interval_s: draft.interval_s,
+    hidden: draft.hidden, schedule_mode: draft.schedule_mode, interval_unit: draft.interval_unit,
     credential_id: draft.credential_id, secret: draft.secret,
     param_values: paramValuesPayload(),
   };
@@ -296,6 +405,7 @@ async function saveAsTemplate(node) {
   const payload = {
     name: draft.name, method: draft.method, script: draft.script,
     timeout_s: draft.timeout_s, interval_s: draft.interval_s,
+    interval_unit: draft.interval_unit,
     metrics: draft.metrics.map((m) => ({ name: m.name, regex: m.regex, group_index: m.group_index, cast: m.cast, unit: m.unit, rules: m.rules.map((r) => ({ op: r.op, value: r.value, status_level_id: r.status_level_id, priority: r.priority })) })),
   };
   try { await api.saveTemplate({ name, template_type: 'dataset', payload }); toast('Template saved.'); }

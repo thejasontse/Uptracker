@@ -1,0 +1,52 @@
+/* Uptracker designer — chrome for the standalone nodegraph playground.
+   Design tokens mirror admin/app.css so the page matches the main app. */
+:root {
+  --ng-bg: #fafafa;
+  --ng-grid: #e0e0e0;
+  --ng-node-bg: #ffffff;
+  --ng-node-border: #b0b0b0;
+  --ng-header-bg: #e8e8e8;
+  --ng-text: #222222;
+  --ng-muted: #888888;
+  --ng-port-in: #2a7fff;
+  --ng-edge: #777777;
+  --ng-edge-selected: #d33;
+  --ng-btn-hover: #00000022;
+  --ng-danger: #e04040;
+  --ng-row-alt: #f2f5f8;
+}
+.dark {
+  --ng-bg: #1e1e24;
+  --ng-grid: #2e2e38;
+  --ng-node-bg: #2a2a33;
+  --ng-node-border: #55556a;
+  --ng-header-bg: #3a3a48;
+  --ng-text: #e8e8f0;
+  --ng-muted: #9a9ab0;
+  --ng-port-in: #5aa2ff;
+  --ng-edge: #8a8aa0;
+  --ng-edge-selected: #ff6666;
+  --ng-btn-hover: #ffffff22;
+  --ng-row-alt: #26262e;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; height: 100%;
+  font: 12px system-ui, sans-serif;
+  color: var(--ng-text); background: var(--ng-bg);
+}
+#app { display: flex; flex-direction: column; height: 100vh; }
+main { flex: 1; display: flex; min-height: 0; position: relative; }
+#canvas { flex: 1; min-width: 0; }
+
+/* The context menu is the only interface: buttons styled to match it. */
+button {
+  font: inherit; color: var(--ng-text);
+  background: var(--ng-header-bg); border: 1px solid var(--ng-node-border);
+  border-radius: 4px; padding: 4px 10px; cursor: pointer;
+}
+button:hover { background: var(--ng-btn-hover); }
+
+.err { color: var(--ng-danger); }
+.pad { padding: 12px; }

@@ -10,20 +10,27 @@ editable in the admin editor (and shown, read-only, on the dashboard).
 
 - **Node** — a network object. Opt in with *Tracking*.
 - **Dataset** — a retrieval job on a schedule (methods: `bash`, `cmd`,
-  `powershell`). Runs server-side.
+  `powershell`). Runs server-side. Scheduling is opt-out: **Not scheduled**
+  (`interval_s = 0`) makes an on-demand dataset the timer never runs — collect
+  it with *Run*. A timeout of `0` disables the subprocess time limit entirely,
+  for long-running on-demand scripts. Datasets can also be **hidden** from the
+  dashboard (see Deployment paths).
 - **Metric** — a named variable extracted from the dataset output via a regex
   capture group, with a type cast.
 - **Rule** — maps a metric value to a status level (`>`, `<`, `contains`,
   `missing`, …). The worst matching status wins.
 - **Status** — fixed levels (good / warning / critical / unknown). A node's
-  status is the worst across its enabled datasets.
+  status is the worst across its visible, scheduled datasets.
 - **Alert** — optional per-metric email when a non-default status is reached.
 - **Template** — reusable dataset (with metrics/rules); apply to other nodes.
 - **Credential** — encrypted at rest (Fernet keyfile). Secrets are write-only
   and must be re-entered whenever a dataset's script/method/credential changes.
 
 Only the latest value per metric is stored — no historical time series. The UI
-polls `/api/snapshot` on an interval.
+polls `/api/snapshot` on an interval. Datasets flagged **Hide on dashboard** in
+the admin are omitted from the dashboard's snapshot entirely (graph dock, status
+table, and node refresh); they still collect on schedule and contribute nothing
+to the node status rollup. Admin and the bare API always see every dataset.
 
 ## Requirements
 
@@ -54,8 +61,9 @@ The app serves two self-contained static bundles from the same backend/API:
 
 | Path         | What                                                                 |
 |--------------|----------------------------------------------------------------------|
-| `/dashboard` | **Read-only** view: node graph (editing disabled) + status table. No right panel. Each node has a refresh button (⟳) that queues all of its enabled datasets for collection. Root `/` redirects here. |
+| `/dashboard` | **Read-only** view: node graph (editing disabled) + status table. No right panel. Each node has a refresh button (⟳) that queues all of its scheduled datasets for collection (hidden and on-demand datasets are skipped). Root `/` redirects here. |
 | `/admin`     | Full editor: graph editing, right dock (datasets/metrics/rules, templates, credentials, settings). |
+| `/designer`  | Standalone [nodegraph.js](admin/vendor/nodegraph.js) playground: a fully editable empty canvas with no Uptracker data, API usage, or persistence. The library's context menu (double-click the canvas) is the only interface — it covers Export/Import JSON, PDF export, fit/reset view, and theming. Holds no data, so it needs no proxy protection. |
 
 The application itself has **no built-in authentication** — lock down `/admin`
 at the web server in front of it. Uptracker listens on `127.0.0.1:8090` (or
@@ -215,14 +223,15 @@ Notes:
 app/        backend (db, crypto, parser, rules, executor, scheduler, mailer, templates, query, main)
 admin/      full frontend bundle (index.html, app.css, js/*, vendor/nodegraph.js)
 dashboard/  read-only frontend bundle (graph + table only, no dock/editor modules)
+designer/   standalone nodegraph playground (no API usage, no persistence)
 tests/      pytest suite
 data/       SQLite db + keyfile (gitignored — never commit)
 ```
 
 Each frontend bundle is self-contained and carries its own copy of the
-`nodegraph` library under `vendor/`. The two vendor copies are kept identical —
-if you change the library, apply the change to both `admin/vendor/nodegraph.js`
-and `dashboard/vendor/nodegraph.js`.
+`nodegraph` library under `vendor/`. The three vendor copies are kept identical —
+if you change the library, apply the change to `admin/vendor/nodegraph.js`,
+`dashboard/vendor/nodegraph.js`, and `designer/vendor/nodegraph.js`.
 
 ## Notes
 

@@ -417,7 +417,8 @@ def test_run_node_queues_enabled_datasets(client):
     body = {"name": "d1", "method": "bash", "script": "echo v=1"}
     ds1 = client.post("/api/nodes/n1/datasets", json=body).json()
     ds2 = client.post("/api/nodes/n1/datasets", json=body).json()
-    # Disable the second dataset (patch replaces the whole body).
+    # Disable the second dataset via the API (the admin UI no longer exposes
+    # it; "Not scheduled" is the user-facing pause).
     client.patch(f"/api/datasets/{ds2['id']}", json={**body, "name": "d2", "enabled": False})
 
     r = client.post("/api/nodes/n1/run")
@@ -425,6 +426,19 @@ def test_run_node_queues_enabled_datasets(client):
     # only the enabled dataset is collected, in-process (started) even with the
     # scheduler disabled.
     assert r.json() == {"ok": True, "queued": 1, "started": 1}
+
+
+def test_patch_without_enabled_preserves_flag(client):
+    """A PATCH that omits `enabled` (what the admin sends now) must not flip a
+    disabled dataset back on — the stored flag survives."""
+    _mk_node(client)
+    body = {"name": "d", "method": "bash", "script": "echo v=1"}
+    ds = client.post("/api/nodes/n1/datasets", json=body).json()
+    assert client.patch(f"/api/datasets/{ds['id']}",
+                        json={**body, "enabled": False}).json()["enabled"] is False
+    kept = client.patch(f"/api/datasets/{ds['id']}",
+                        json={**body, "name": "d2"}).json()
+    assert kept["enabled"] is False and kept["name"] == "d2"
 
 
 def test_run_node_missing(client):
@@ -756,9 +770,30 @@ def test_dashboard_bundle_served(client):
     assert client.get("/dashboard/vendor/nodegraph.js").status_code == 200
 
 
+def test_designer_bundle_served(client):
+    r = client.get("/designer/")
+    assert r.status_code == 200
+    assert "js/designer.js" in r.text  # standalone playground entry module
+    assert client.get("/designer/app.css").status_code == 200
+    assert client.get("/designer/js/designer.js").status_code == 200
+    v = client.get("/designer/vendor/nodegraph.js")
+    assert v.status_code == 200
+    assert "immutable" in v.headers["cache-control"]
+
+
+def test_vendor_nodegraph_copies_identical():
+    """The three bundles each ship their own copy of the library (README
+    convention); this guards against one drifting out of sync."""
+    from pathlib import Path
+    base = Path(__file__).resolve().parent.parent
+    copies = [base / b / "vendor" / "nodegraph.js" for b in ("admin", "dashboard", "designer")]
+    blobs = [p.read_bytes() for p in copies]
+    assert all(b == blobs[0] for b in blobs), "vendor/nodegraph.js copies differ — sync them"
+
+
 def test_api_reachable_under_bundle_prefixes(client):
     _mk_node(client, node_id="px1")
-    for prefix in ("/admin", "/dashboard"):
+    for prefix in ("/admin", "/dashboard", "/designer"):
         r = client.get(f"{prefix}/api/snapshot")
         assert r.status_code == 200
         assert [n["id"] for n in r.json()["nodes"]] == ["px1"]
@@ -1141,3 +1176,151 @@ def test_migration_strips_known_params_from_existing_rows(client):
     # Re-run init_db (as the app does at startup) and confirm the known key is gone.
     _db.init_db()
     assert _get_ds(client, ds["id"])["param_values"] == {"Target": "10.0.0.5"}
+
+
+# ---------------- on-demand datasets (interval 0) & no-timeout (timeout 0) ----------------
+def test_schedule_config_roundtrip(client):
+    _mk_node(client)
+    # Explicit "every 5 minutes" stores 300s and remembers the form config.
+    ds = client.post("/api/nodes/n1/datasets", json={
+        "name": "d", "method": "bash", "script": "echo v=1",
+        "interval_s": 300, "schedule_mode": "every", "interval_unit": "minutes"}).json()
+    assert ds["interval_s"] == 300 and ds["schedule_mode"] == "every" and ds["interval_unit"] == "minutes"
+
+    # "Not scheduled" stores interval_s = 0.
+    off = client.patch(f"/api/datasets/{ds['id']}", json={
+        "name": "d", "method": "bash", "script": "echo v=1",
+        "interval_s": 0, "schedule_mode": "none", "interval_unit": "minutes"}).json()
+    assert off["interval_s"] == 0 and off["schedule_mode"] == "none"
+
+    # API-only caller omits the new fields: mode/unit are preserved from the row.
+    # An explicit interval_s alone updates only the canonical seconds — display
+    # config changes only when the client sends mode+unit (the admin does).
+    plain = client.patch(f"/api/datasets/{ds['id']}", json={
+        "name": "d", "method": "bash", "script": "echo v=1",
+        "interval_s": 7200}).json()
+    assert plain["interval_s"] == 7200
+    assert plain["schedule_mode"] == "none" and plain["interval_unit"] == "minutes"
+
+    # Explicit mode+unit round-trips again.
+    back = client.patch(f"/api/datasets/{ds['id']}", json={
+        "name": "d", "method": "bash", "script": "echo v=1",
+        "interval_s": 7200, "schedule_mode": "every", "interval_unit": "hours"}).json()
+    assert back["interval_s"] == 7200 and back["schedule_mode"] == "every" and back["interval_unit"] == "hours"
+
+    # PATCH replaces the whole document: an omitted interval_s falls back to the
+    # body default (600), like every other field; explicit mode+unit are kept.
+    keep = client.patch(f"/api/datasets/{ds['id']}", json={
+        "name": "d2", "method": "bash", "script": "echo v=1"}).json()
+    assert keep["interval_s"] == 600 and keep["schedule_mode"] == "every" and keep["interval_unit"] == "hours"
+
+    # Invalid values are rejected.
+    bad = client.post("/api/nodes/n1/datasets", json={
+        "name": "x", "method": "bash", "script": "echo", "schedule_mode": "weekly"})
+    assert bad.status_code == 400
+
+
+def test_ondemand_dataset_not_scheduled_but_runnable(client):
+    _mk_node(client)
+    ds = client.post("/api/nodes/n1/datasets", json={
+        "name": "manual", "method": "bash", "script": "echo v=7",
+        "interval_s": 0, "schedule_mode": "none"}).json()
+    assert ds["interval_s"] == 0
+
+    # A due next_run_at must not put it in the scheduler's due set.
+    from app import db as _db, scheduler
+    with _db.db_conn() as conn:
+        conn.execute("UPDATE datasets SET next_run_at='2000-01-01T00:00:00Z' WHERE id=?", (ds["id"],))
+        assert ds["id"] not in scheduler._due_datasets(conn)
+        # _claim refuses it and clears the stale due time.
+        assert not scheduler._claim(conn, ds["id"])
+        assert conn.execute("SELECT next_run_at FROM datasets WHERE id=?",
+                            (ds["id"],)).fetchone()["next_run_at"] is None
+
+    # Manual run works despite the dataset being disabled for scheduling: the
+    # per-dataset Run endpoint is admin-side and always collects.
+    res = client.post(f"/api/datasets/{ds['id']}/run").json()
+    assert res["ok"]
+    with _db.db_conn() as conn:
+        assert conn.execute("SELECT next_run_at FROM datasets WHERE id=?",
+                            (ds["id"],)).fetchone()["next_run_at"] is None
+
+    # Node refresh skips it.
+    r = client.post("/api/nodes/n1/run").json()
+    assert r["queued"] == 0 and r["started"] == 0
+
+
+def test_zero_timeout_runs_long_script(client):
+    _mk_node(client)
+    ds = client.post("/api/nodes/n1/datasets", json={
+        "name": "slow", "method": "bash", "script": "sleep 1.2; echo v=1",
+        "timeout_s": 0, "interval_s": 0}).json()
+    assert ds["timeout_s"] == 0
+    res = client.post(f"/api/datasets/{ds['id']}/run").json()
+    assert res["ok"], res.get("error")
+
+
+def test_scheduler_claim_uses_interval(client):
+    _mk_node(client)
+    from app import db as _db, scheduler
+    ds = client.post("/api/nodes/n1/datasets", json={
+        "name": "d", "method": "bash", "script": "echo", "interval_s": 60}).json()
+    with _db.db_conn() as conn:
+        assert ds["id"] in scheduler._due_datasets(conn)  # NULL next_run_at is due
+        assert scheduler._claim(conn, ds["id"])
+
+
+# ---------------- hidden datasets ----------------
+def test_hidden_dataset_visible_to_admin_only(client):
+    _mk_node(client)
+    ds = client.post("/api/nodes/n1/datasets", json={
+        "name": "secret-probe", "method": "bash", "script": "echo v=1"}).json()
+    assert ds["hidden"] is False
+    upd = client.patch(f"/api/datasets/{ds['id']}", json={
+        "name": "secret-probe", "method": "bash", "script": "echo v=1", "hidden": True}).json()
+    assert upd["hidden"] is True
+
+    ids_bare = [d["id"] for n in client.get("/api/snapshot").json()["nodes"] for d in n["datasets"]]
+    ids_admin = [d["id"] for n in client.get("/admin/api/snapshot").json()["nodes"] for d in n["datasets"]]
+    ids_dash = [d["id"] for n in client.get("/dashboard/api/snapshot").json()["nodes"] for d in n["datasets"]]
+    assert ds["id"] in ids_bare and ds["id"] in ids_admin
+    assert ds["id"] not in ids_dash
+
+
+def test_hidden_dataset_skipped_by_node_refresh(client):
+    _mk_node(client)
+    body = {"name": "d", "method": "bash", "script": "echo v=1"}
+    vis = client.post("/api/nodes/n1/datasets", json=body).json()
+    hid = client.post("/api/nodes/n1/datasets", json={**body, "hidden": True}).json()
+    # Seed the hidden row with a stale due time: refresh must leave it alone.
+    from app import db as _db
+    with _db.db_conn() as conn:
+        conn.execute("UPDATE datasets SET next_run_at='2000-01-01T00:00:00Z' WHERE id=?", (hid["id"],))
+    r = client.post("/api/nodes/n1/run").json()
+    assert r["queued"] == 1 and r["started"] == 1
+    with _db.db_conn() as conn:
+        hid_row = conn.execute("SELECT next_run_at, last_run_at FROM datasets WHERE id=?", (hid["id"],)).fetchone()
+        vis_next = conn.execute("SELECT next_run_at FROM datasets WHERE id=?", (vis["id"],)).fetchone()["next_run_at"]
+    # The hidden dataset was never queued: its stale due time is untouched and
+    # the background collection never ran it.
+    assert hid_row["next_run_at"] == "2000-01-01T00:00:00Z" and hid_row["last_run_at"] is None
+    assert vis_next is not None
+
+
+def test_hidden_dataset_excluded_from_status_rollup(client):
+    _mk_node(client)
+    body = {"name": "d", "method": "bash", "script": "echo v=1"}
+    ds = client.post("/api/nodes/n1/datasets", json=body).json()
+    m = client.post(f"/api/datasets/{ds['id']}/metrics", json={
+        "name": "v", "regex": r"v=(\d+)"}).json()
+    levels = client.get("/api/status-levels").json()["status_levels"]
+    critical = next(l for l in levels if l["name"] == "critical")
+    client.post(f"/api/metrics/{m['id']}/rules", json={"op": "gt", "value": "0", "status_level_id": critical["id"]})
+    res = client.post(f"/api/datasets/{ds['id']}/run").json()
+    assert res["node_status"] == "critical"
+
+    # Hiding it drops the dataset from the rollup: node falls back to unknown.
+    client.patch(f"/api/datasets/{ds['id']}", json={**body, "hidden": True})
+    from app import db as _db
+    with _db.db_conn() as conn:
+        assert __import__("app.collector", fromlist=["x"]).recompute_node_status(conn, "n1") == "unknown"
