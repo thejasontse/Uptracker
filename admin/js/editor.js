@@ -64,7 +64,8 @@ export function scheduleLabel(ds) {
   const mult = { seconds: 1, minutes: 60, hours: 3600, days: 86400 }[unit] || 1;
   if (unit === 'seconds' || n % mult !== 0) return `every ${n}s`;
   const count = n / mult;
-  return `every ${count} ${unit}${count === 1 ? '' : 's'}`;
+  // `unit` is stored plural ("minutes", "hours", "days"); singularize for 1.
+  return `every ${count} ${count === 1 && unit.endsWith('s') ? unit.slice(0, -1) : unit}`;
 }
 
 // Timeout summary: 0 means the script runs without a time limit.
